@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type SyntheticEvent } from 'react';
 import {
   AlertCircle,
   ArrowRight,
@@ -11,6 +11,7 @@ import {
   ChevronDown,
   Cloud,
   CloudOff,
+  Crown,
   HeartHandshake,
   History,
   Home,
@@ -19,19 +20,21 @@ import {
   LogOut,
   Moon,
   Plus,
+  RefreshCw,
+  Settings2,
   ShieldCheck,
   Sparkles,
   Trash2,
   TrendingUp,
   Utensils,
-  WifiOff,
+  UserCheck,
+  UsersRound,
   Zap,
 } from 'lucide-react';
 import { CartesianGrid, Line, LineChart, XAxis, YAxis } from 'recharts';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Checkbox } from '@/components/ui/checkbox';
 import {
   ChartContainer,
   ChartTooltip,
@@ -50,15 +53,18 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import {
+  assignFamilyRole,
   connectFirebase,
   connectFirebaseWithGoogle,
   disconnectFirebase,
+  listFamilyUsers,
   loadRuntimeConfig,
   pullRemoteEntries,
   pushEntry,
   registerFirebaseAccount,
   restoreFirebase,
   type FirebaseConnection,
+  type ManagedUserProfile,
   type MayMayRuntimeConfig,
 } from '@/lib/maymay-firebase';
 import { meltdownEstimate, summarizeEntries } from '@/lib/maymay-insights';
@@ -365,6 +371,85 @@ function PossibleTriggerCard({
   );
 }
 
+function PersonRow({
+  person,
+  currentUserId,
+  busy,
+  onAssign,
+}: {
+  person: ManagedUserProfile;
+  currentUserId: string;
+  busy: boolean;
+  onAssign: (userId: string, role: 'caregiver' | 'master') => void;
+}) {
+  const isCurrentUser = person.uid === currentUserId;
+  const name = person.displayName || person.email?.split('@')[0] || 'New person';
+  const roleLabel = person.role === 'pending'
+    ? 'Waiting for approval'
+    : person.role === 'master'
+      ? 'Master'
+      : person.role === 'caregiver'
+        ? 'Caregiver'
+        : 'Viewer';
+
+  return (
+    <article className="person-row">
+      <span className="person-avatar" aria-hidden="true">{name.slice(0, 1).toUpperCase()}</span>
+      <div className="person-details">
+        <div className="person-name-line"><b>{name}</b>{isCurrentUser && <span>You</span>}</div>
+        <p>{person.email || person.uid}</p>
+        <small data-role={person.role}>{roleLabel}</small>
+      </div>
+      {isCurrentUser ? (
+        <div className="person-current"><ShieldCheck /> Your access</div>
+      ) : (
+        <div className="person-actions" aria-label={`Choose access for ${name}`}>
+          <Button
+            variant={person.role === 'caregiver' && person.active ? 'default' : 'outline'}
+            type="button"
+            disabled={busy || (person.role === 'caregiver' && person.active)}
+            onClick={() => onAssign(person.uid, 'caregiver')}
+          >
+            {busy ? <LoaderCircle className="animate-spin" /> : <UserCheck />}
+            {person.role === 'caregiver' && person.active ? 'Caregiver' : 'Make caregiver'}
+          </Button>
+          <Button
+            variant={person.role === 'master' && person.active ? 'default' : 'outline'}
+            type="button"
+            disabled={busy || (person.role === 'master' && person.active)}
+            onClick={() => onAssign(person.uid, 'master')}
+          >
+            {busy ? <LoaderCircle className="animate-spin" /> : <Crown />}
+            {person.role === 'master' && person.active ? 'Master' : 'Make master'}
+          </Button>
+        </div>
+      )}
+    </article>
+  );
+}
+
+function PendingAccessScreen({ email, onSignOut }: { email: string; onSignOut: () => void }) {
+  return (
+    <main className="access-shell">
+      <section className="access-card" aria-labelledby="pending-access-title">
+        <div className="access-brand">
+          <span><HeartHandshake aria-hidden="true" /></span>
+          <div><b>MayMay</b><small>Daily care notes</small></div>
+        </div>
+        <div className="pending-access-message">
+          <ShieldCheck aria-hidden="true" />
+          <p className="eyebrow">Account created</p>
+          <h1 id="pending-access-title">Waiting for a role</h1>
+          <p><b>{email || 'This account'}</b> is registered, but no care records are visible yet.</p>
+          <p>A MayMay master can open <b>Settings</b> and choose <b>Make caregiver</b> or <b>Make master</b>.</p>
+          <Button className="mt-5 h-11 w-full" type="button" onClick={() => window.location.reload()}><RefreshCw /> Check access again</Button>
+          <Button variant="ghost" className="mt-2 h-11 w-full" type="button" onClick={onSignOut}><LogOut /> Sign out</Button>
+        </div>
+      </section>
+    </main>
+  );
+}
+
 function AccessScreen({
   mode,
   email,
@@ -398,7 +483,7 @@ function AccessScreen({
   onNameChange: (value: string) => void;
   onConfirmPasswordChange: (value: string) => void;
   onGoogleSignIn: () => void;
-  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  onSubmit: (event: SyntheticEvent<HTMLFormElement>) => void;
 }) {
   return (
     <main className="access-shell">
@@ -418,12 +503,13 @@ function AccessScreen({
               <button type="button" data-active={mode === 'sign-in'} onClick={() => onModeChange('sign-in')}>Sign in</button>
               <button type="button" data-active={mode === 'register'} onClick={() => onModeChange('register')}>Create account</button>
             </div>
-            {mode === 'register' && registrationComplete ? (
+            {registrationComplete ? (
               <div className="registration-complete">
                 <CheckCircle2 aria-hidden="true" />
                 <div>
-                  <h1 id="access-title">Account created</h1>
-                  <p>Ask the MayMay host owner to approve <b>{registrationComplete}</b>. They can enter <code>caregiver {registrationComplete}</code> in the host terminal.</p>
+                  <h1 id="access-title">Waiting for approval</h1>
+                  <p>The account for <b>{registrationComplete}</b> is ready. Sign in after a MayMay master approves it.</p>
+                  <p>A MayMay master can assign Caregiver or Master access from <b>Settings</b>.</p>
                   <Button className="mt-5 h-11" type="button" onClick={() => onModeChange('sign-in')}>Return to sign in <ArrowRight /></Button>
                 </div>
               </div>
@@ -447,7 +533,7 @@ function AccessScreen({
                   {error && <p className="access-error" role="alert"><AlertCircle />{error}</p>}
                   <Button className="h-12 w-full text-base" type="submit" disabled={busy}>{busy ? <LoaderCircle className="animate-spin" /> : <ShieldCheck />}{busy ? (mode === 'register' ? 'Creating account…' : 'Signing in…') : (mode === 'register' ? 'Create account' : 'Sign in')}</Button>
                 </form>
-                <p className="access-private"><ShieldCheck />{mode === 'register' ? 'Registration does not grant access. The host owner must approve every new caregiver.' : 'Firebase keeps this trusted device signed in. MayMay never stores the password.'}</p>
+                <p className="access-private"><ShieldCheck />{mode === 'register' ? 'No care records are visible until a MayMay master assigns the new account a role.' : 'Firebase keeps this trusted device signed in. MayMay never stores the password.'}</p>
               </>
             )}
           </>
@@ -467,6 +553,7 @@ export default function HomePage() {
   const [saveMessage, setSaveMessage] = useState('Ready');
   const [syncState, setSyncState] = useState<SyncState>('starting');
   const [runtimeConfig, setRuntimeConfig] = useState<MayMayRuntimeConfig | null>(null);
+  const [firebaseConnection, setFirebaseConnection] = useState<FirebaseConnection | null>(null);
   const [accessMode, setAccessMode] = useState<'sign-in' | 'register'>('sign-in');
   const [caregiverEmail, setCaregiverEmail] = useState('');
   const [caregiverPassword, setCaregiverPassword] = useState('');
@@ -475,6 +562,10 @@ export default function HomePage() {
   const [registrationComplete, setRegistrationComplete] = useState('');
   const [authError, setAuthError] = useState('');
   const [authBusy, setAuthBusy] = useState(false);
+  const [people, setPeople] = useState<ManagedUserProfile[]>([]);
+  const [peopleBusy, setPeopleBusy] = useState(false);
+  const [peopleActionId, setPeopleActionId] = useState('');
+  const [peopleMessage, setPeopleMessage] = useState('');
   const connectionRef = useRef<FirebaseConnection | null>(null);
   const pendingDates = useRef(new Set<string>());
   const entriesRef = useRef<DailyEntry[]>([]);
@@ -490,6 +581,11 @@ export default function HomePage() {
   );
   const summary = useMemo(() => summarizeEntries(entries), [entries]);
   const risk = useMemo(() => meltdownEstimate(entries, entry), [entries, entry]);
+  const currentRole = firebaseConnection?.profile.role;
+  const isMaster = currentRole === 'master';
+  const isReadOnly = currentRole === 'viewer';
+  const pendingPeople = people.filter((person) => person.role === 'pending' || !person.active);
+  const approvedPeople = people.filter((person) => person.role !== 'pending' && person.active);
   const isBackfill = selectedDate < today;
   const progressItems = [
     entry.moods.morning.score,
@@ -532,15 +628,25 @@ export default function HomePage() {
         return;
       }
       try {
-        const connection = await restoreFirebase(config.firebase, config.childId);
+        const connection = await restoreFirebase(config.firebase, config.childId, config.familyId);
         if (!alive) return;
         if (!connection) {
           setSyncState('signed-out');
           return;
         }
+        if (connection.profile.role === 'pending') {
+          connectionRef.current = connection;
+          setFirebaseConnection(connection);
+          setEntries([]);
+          setCaregiverEmail(connection.user.email ?? '');
+          setSyncState('connected');
+          setSaveMessage('Waiting for role assignment');
+          return;
+        }
         const remote = await pullRemoteEntries(connection);
         if (!alive) return;
         connectionRef.current = connection;
+        setFirebaseConnection(connection);
         const merged = mergeEntries(local, remote);
         setEntries(merged);
         saveLocalEntries(merged);
@@ -594,6 +700,7 @@ export default function HomePage() {
   }
 
   function updateEntry(patch: Partial<DailyEntry> | ((current: DailyEntry) => DailyEntry)) {
+    if (isReadOnly) return;
     const current = entriesRef.current.find((item) => item.date === selectedDate) ?? emptyEntry(selectedDate);
     const next = typeof patch === 'function' ? patch(current) : { ...current, ...patch };
     replaceEntry({ ...next, date: selectedDate, version: 3, updatedAt: new Date().toISOString() });
@@ -638,7 +745,45 @@ export default function HomePage() {
     openEntry(localDateValue(previous));
   }
 
-  async function handleSignIn(event: FormEvent<HTMLFormElement>) {
+  async function refreshPeople() {
+    const connection = connectionRef.current;
+    if (!connection || connection.profile.role !== 'master') return;
+    setPeopleBusy(true);
+    setPeopleMessage('');
+    try {
+      setPeople(await listFamilyUsers(connection));
+    } catch (error) {
+      setPeopleMessage(error instanceof Error ? error.message : 'The people list could not be loaded.');
+    } finally {
+      setPeopleBusy(false);
+    }
+  }
+
+  async function handleAssignRole(userId: string, role: 'caregiver' | 'master') {
+    const connection = connectionRef.current;
+    if (!connection || connection.profile.role !== 'master') return;
+    const person = people.find((item) => item.uid === userId);
+    setPeopleActionId(userId);
+    setPeopleMessage('');
+    try {
+      await assignFamilyRole(connection, userId, role);
+      setPeopleMessage(`${person?.displayName || person?.email || 'This person'} is now a ${role}.`);
+      setPeople(await listFamilyUsers(connection));
+    } catch (error) {
+      setPeopleMessage(error instanceof Error ? error.message : 'The role could not be changed.');
+    } finally {
+      setPeopleActionId('');
+    }
+  }
+
+  function changeTab(value: string) {
+    setActiveTab(value);
+    if (value === 'settings' && connectionRef.current?.profile.role === 'master') {
+      void refreshPeople();
+    }
+  }
+
+  async function handleSignIn(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!runtimeConfig) return;
     if (accessMode === 'register') {
@@ -654,6 +799,7 @@ export default function HomePage() {
           caregiverName.trim(),
           caregiverEmail.trim(),
           caregiverPassword,
+          runtimeConfig.familyId,
         );
         setRegistrationComplete(account.email);
         setCaregiverPassword('');
@@ -685,10 +831,22 @@ export default function HomePage() {
         caregiverEmail.trim(),
         caregiverPassword,
         runtimeConfig.childId,
+        runtimeConfig.familyId,
       );
+      if (connection.profile.role === 'pending') {
+        connectionRef.current = connection;
+        setFirebaseConnection(connection);
+        setEntries([]);
+        setCaregiverEmail(connection.user.email ?? caregiverEmail.trim());
+        setCaregiverPassword('');
+        setSyncState('connected');
+        setSaveMessage('Waiting for role assignment');
+        return;
+      }
       const remote = await pullRemoteEntries(connection);
       const merged = mergeEntries(entriesRef.current, remote);
       connectionRef.current = connection;
+      setFirebaseConnection(connection);
       setEntries(merged);
       saveLocalEntries(merged);
       if (connection.profile.role !== 'viewer') {
@@ -713,10 +871,22 @@ export default function HomePage() {
       const connection = await connectFirebaseWithGoogle(
         runtimeConfig.firebase,
         runtimeConfig.childId,
+        runtimeConfig.familyId,
       );
+      if (connection.profile.role === 'pending') {
+        connectionRef.current = connection;
+        setFirebaseConnection(connection);
+        setEntries([]);
+        setCaregiverEmail(connection.user.email ?? '');
+        setAccessMode('sign-in');
+        setSyncState('connected');
+        setSaveMessage('Waiting for role assignment');
+        return;
+      }
       const remote = await pullRemoteEntries(connection);
       const merged = mergeEntries(entriesRef.current, remote);
       connectionRef.current = connection;
+      setFirebaseConnection(connection);
       setEntries(merged);
       saveLocalEntries(merged);
       setCaregiverEmail(connection.user.email ?? '');
@@ -753,12 +923,17 @@ export default function HomePage() {
     setAuthError('');
     setCaregiverPassword('');
     setConfirmPassword('');
-    if (mode === 'register') setRegistrationComplete('');
+    setRegistrationComplete('');
   }
 
   async function handleSignOut() {
     if (connectionRef.current) await disconnectFirebase(connectionRef.current);
     connectionRef.current = null;
+    setFirebaseConnection(null);
+    setEntries([]);
+    setPeople([]);
+    setPeopleMessage('');
+    setActiveTab('today');
     setCaregiverPassword('');
     setSyncState('signed-out');
     setSaveMessage('Signed out');
@@ -827,6 +1002,9 @@ export default function HomePage() {
           },
           annotations: { readOnlyHint: false, untrustedContentHint: false },
           execute(input) {
+            if (!['master', 'caregiver'].includes(connectionRef.current?.profile.role ?? '')) {
+              throw new Error('A Caregiver or Master role is required to save a check-in.');
+            }
             const value = input as {
               date?: string;
               morning?: Partial<MoodPeriod>;
@@ -877,7 +1055,7 @@ export default function HomePage() {
   if (!hydrated || syncState === 'starting' || syncState === 'connecting') {
     return (
       <main className="access-shell">
-        <div className="access-loading" role="status"><LoaderCircle className="animate-spin" /><span>Starting MayMay…</span></div>
+        <output className="access-loading"><LoaderCircle className="animate-spin" /><span>Starting MayMay…</span></output>
       </main>
     );
   }
@@ -905,6 +1083,10 @@ export default function HomePage() {
     );
   }
 
+  if (currentRole === 'pending') {
+    return <PendingAccessScreen email={caregiverEmail} onSignOut={() => { void handleSignOut(); }} />;
+  }
+
   return (
     <main className="min-h-screen bg-background text-foreground">
       <header className="app-header">
@@ -926,11 +1108,12 @@ export default function HomePage() {
         </div>
       </header>
 
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="mx-auto w-full max-w-[1160px] px-4 pb-28 pt-5 sm:px-6 sm:pb-10 lg:px-8">
+      <Tabs value={activeTab} onValueChange={changeTab} className="mx-auto w-full max-w-[1160px] px-4 pb-28 pt-5 sm:px-6 sm:pb-10 lg:px-8">
         <TabsList className="top-nav" aria-label="MayMay sections">
           <TabsTrigger value="today" className="top-nav-item"><Home data-icon="inline-start" /> Today</TabsTrigger>
           <TabsTrigger value="insights" className="top-nav-item"><BarChart3 data-icon="inline-start" /> Insights</TabsTrigger>
           <TabsTrigger value="history" className="top-nav-item"><History data-icon="inline-start" /> History</TabsTrigger>
+          <TabsTrigger value="settings" className="top-nav-item"><Settings2 data-icon="inline-start" /> Settings</TabsTrigger>
         </TabsList>
 
         <TabsContent value="today" className="mt-5">
@@ -1129,6 +1312,53 @@ export default function HomePage() {
             const tags = entryMoodTags(item);
             return <button key={item.date} type="button" className="history-item" onClick={() => openEntry(item.date)}><div className="history-date"><small>{new Intl.DateTimeFormat('en-US', { weekday: 'short' }).format(new Date(`${item.date}T12:00:00`))}</small><strong>{new Date(`${item.date}T12:00:00`).getDate()}</strong><span>{new Intl.DateTimeFormat('en-US', { month: 'short' }).format(new Date(`${item.date}T12:00:00`))}</span></div><div className="history-summary"><b>{item.date === today ? 'Today' : displayDate(item.date, false)}</b><div>{moodAverage ? <span>Daily mood {moodAverage.toFixed(1)}/5</span> : <span>No mood</span>}<span>{item.schoolStatus || 'No school entry'}</span><span>{item.meltdowns.length} {item.meltdowns.length === 1 ? 'meltdown' : 'meltdowns'}</span></div>{tags.length > 0 && <p>{tags.join(' · ')}</p>}</div><ArrowRight /></button>;
           })}</div>}
+        </TabsContent>
+
+        <TabsContent value="settings" className="mt-5">
+          <div className="page-intro">
+            <div><p className="eyebrow">Private access</p><h1>Settings</h1><p>See your access and manage trusted people.</p></div>
+          </div>
+
+          <div className="settings-grid mt-5">
+            <Card>
+              <CardHeader><CardTitle className="text-xl font-bold">Your account</CardTitle></CardHeader>
+              <CardContent>
+                <div className="current-access-card">
+                  <span><ShieldCheck /></span>
+                  <div><b>{firebaseConnection?.user.displayName || caregiverEmail || 'MayMay account'}</b><p>{caregiverEmail}</p></div>
+                  <strong>{currentRole === 'master' ? 'Master' : currentRole === 'caregiver' ? 'Caregiver' : 'Viewer'}</strong>
+                </div>
+              </CardContent>
+            </Card>
+
+            {isMaster && (
+              <Card className="people-card">
+                <CardHeader className="flex-row items-center justify-between gap-4">
+                  <div><CardTitle className="flex items-center gap-2 text-xl font-bold"><UsersRound /> People &amp; roles</CardTitle><p className="mt-2 text-base text-muted-foreground">Only masters can see these controls.</p></div>
+                  <Button variant="outline" type="button" disabled={peopleBusy} onClick={() => { void refreshPeople(); }}><RefreshCw className={peopleBusy ? 'animate-spin' : ''} /> Refresh</Button>
+                </CardHeader>
+                <CardContent className="space-y-6">
+                  {peopleMessage && <output className="people-message">{peopleMessage}</output>}
+
+                  <section aria-labelledby="pending-people-title">
+                    <div className="people-section-heading"><div><h2 id="pending-people-title">Waiting for a role</h2><p>These accounts cannot see any care records yet.</p></div><span>{pendingPeople.length}</span></div>
+                    {peopleBusy && people.length === 0 ? (
+                      <div className="quiet-empty"><LoaderCircle className="animate-spin" /><div><b>Loading people…</b></div></div>
+                    ) : pendingPeople.length ? (
+                      <div className="people-list">{pendingPeople.map((person) => <PersonRow key={person.uid} person={person} currentUserId={firebaseConnection?.user.uid ?? ''} busy={peopleActionId === person.uid} onAssign={handleAssignRole} />)}</div>
+                    ) : (
+                      <div className="quiet-empty"><CheckCircle2 /><div><b>No one is waiting</b><p>Newly registered accounts will appear here.</p></div></div>
+                    )}
+                  </section>
+
+                  <section aria-labelledby="approved-people-title">
+                    <div className="people-section-heading"><div><h2 id="approved-people-title">Approved people</h2><p>Caregivers can track. Masters can also manage roles.</p></div><span>{approvedPeople.length}</span></div>
+                    <div className="people-list">{approvedPeople.map((person) => <PersonRow key={person.uid} person={person} currentUserId={firebaseConnection?.user.uid ?? ''} busy={peopleActionId === person.uid} onAssign={handleAssignRole} />)}</div>
+                  </section>
+                </CardContent>
+              </Card>
+            )}
+          </div>
         </TabsContent>
       </Tabs>
 

@@ -36,11 +36,23 @@ service cloud.firestore {
           || (isActiveMember(resource.data.familyId)
             && isMaster(resource.data.familyId)));
 
-      // The first Master is assigned by the trusted Admin setup command. After
-      // that, the Master can attach caregiver/viewer profiles to the family.
-      allow create: if isMaster(request.resource.data.familyId)
-        && request.resource.data.role in ['master', 'caregiver', 'viewer']
-        && request.resource.data.active is bool;
+      // Registration creates a locked pending profile. It cannot read or change
+      // care information until a Master assigns an active role.
+      allow create: if (signedIn()
+          && request.auth.uid == userId
+          && request.resource.data.keys().hasOnly([
+            'schemaVersion', 'familyId', 'role', 'active', 'displayName',
+            'email', 'requestedAt', 'createdAt', 'updatedAt'
+          ])
+          && request.resource.data.schemaVersion == 1
+          && request.resource.data.familyId == 'maymay'
+          && request.resource.data.role == 'pending'
+          && request.resource.data.active == false
+          && request.resource.data.displayName is string
+          && request.resource.data.email == request.auth.token.email)
+        || (isMaster(request.resource.data.familyId)
+          && request.resource.data.role in ['master', 'caregiver', 'viewer']
+          && request.resource.data.active is bool);
       allow update: if (signedIn()
           && request.auth.uid == userId
           && request.resource.data.familyId == resource.data.familyId
@@ -119,7 +131,12 @@ service cloud.firestore {
     // Temporary compatibility for the current daily-record client. Remove this
     // after the client migration to the event collection is complete.
     match /users/{userId}/days/{dayId} {
-      allow read, write: if signedIn() && request.auth.uid == userId;
+      allow read: if signedIn()
+        && request.auth.uid == userId
+        && isActiveMember('maymay');
+      allow write: if signedIn()
+        && request.auth.uid == userId
+        && canTrack('maymay');
     }
   }
 }

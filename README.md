@@ -58,12 +58,12 @@ For an older installed copy that predates the host update command, email `MayMay
 
 1. Give the caregiver `http://maymay.local/`, or the numbered fallback address printed by the host terminal.
 2. The caregiver selects **Continue with Google** and chooses their Google account. Firebase creates their login automatically the first time. **Create account** remains available for an email/password login.
-3. Either method creates only a Firebase Authentication login; it does not grant access to care information.
-4. In the host terminal, enter `users` to see the new unassigned account.
-5. Enter `caregiver EMAIL`, replacing `EMAIL` with the registered address.
-6. The caregiver can now return to **Sign in** and use MayMay.
+3. The new account receives a locked pending profile. It cannot see care records while waiting for a role.
+4. A signed-in Master opens **Settings** in MayMay. The role controls are visible only to Masters.
+5. Under **Waiting for a role**, select **Make caregiver** or **Make master** beside the new person.
+6. The new person selects **Check access again**, or signs in again, to enter MayMay.
 
-The Firebase Console's **Authentication → Users → Add user** command remains available as an administrator fallback.
+The host terminal's `users`, `caregiver EMAIL`, and `master EMAIL` commands remain available as administrator fallbacks.
 
 ## Firebase requirements
 

@@ -20,6 +20,7 @@ import {
   getFirestore,
   query,
   serverTimestamp,
+  setDoc,
   where,
   writeBatch,
   type Firestore,
@@ -32,13 +33,18 @@ import {
   type FirebaseWebConfig,
 } from './maymay-types';
 
-type UserRole = 'master' | 'caregiver' | 'viewer';
+export type UserRole = 'pending' | 'master' | 'caregiver' | 'viewer';
 
-type UserProfile = {
+export type UserProfile = {
   familyId: string;
   role: UserRole;
   active: boolean;
   displayName?: string;
+  email?: string;
+};
+
+export type ManagedUserProfile = UserProfile & {
+  uid: string;
 };
 
 export type MayMayRuntimeConfig = {
@@ -90,37 +96,79 @@ async function appFor(config: FirebaseWebConfig) {
   return initializeApp(config, 'maymay');
 }
 
-async function connectionFor(app: FirebaseApp, user: User, childId = DEFAULT_CHILD_ID) {
+function pendingApprovalError(user: User) {
+  const identifier = user.email ?? user.uid;
+  return Object.assign(
+    new Error(`Your account is waiting for a MayMay master to approve it. You cannot view or change care information yet.`),
+    { code: 'maymay/pending-approval', identifier },
+  );
+}
+
+async function ensurePendingProfile(db: Firestore, user: User, familyId: string) {
+  const profileRef = doc(db, 'users', user.uid);
+  const snapshot = await getDoc(profileRef);
+  if (snapshot.exists()) return snapshot;
+
+  await setDoc(profileRef, {
+    schemaVersion: 1,
+    familyId,
+    role: 'pending',
+    active: false,
+    displayName: user.displayName?.trim() || user.email?.split('@')[0] || 'New caregiver',
+    email: user.email ?? '',
+    requestedAt: serverTimestamp(),
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+  return getDoc(profileRef);
+}
+
+async function connectionFor(
+  app: FirebaseApp,
+  user: User,
+  childId = DEFAULT_CHILD_ID,
+  familyId = 'maymay',
+) {
   const db = getFirestore(app);
-  const snapshot = await getDoc(doc(db, 'users', user.uid));
+  const snapshot = await ensurePendingProfile(db, user, familyId);
   if (!snapshot.exists()) {
-    const identifier = user.email ?? user.uid;
     await signOut(getAuth(app));
-    throw new Error(
-      `This account is registered but is waiting for host approval. Ask the host owner to enter: caregiver ${identifier}`,
-    );
+    throw pendingApprovalError(user);
   }
   const profile = snapshot.data() as Partial<UserProfile>;
+  const pendingReadOnly = profile.role === 'pending' && profile.active === false;
+  const approved = profile.active === true
+    && ['master', 'caregiver', 'viewer'].includes(profile.role ?? '');
   if (
-    profile.active !== true ||
     !profile.familyId ||
-    !['master', 'caregiver', 'viewer'].includes(profile.role ?? '')
+    (!pendingReadOnly && !approved)
   ) {
     await signOut(getAuth(app));
     throw new Error('This MayMay account is inactive or incomplete.');
   }
+  await setDoc(
+    doc(db, 'users', user.uid),
+    {
+      displayName: user.displayName?.trim() || profile.displayName || user.email?.split('@')[0] || 'Caregiver',
+      email: user.email ?? profile.email ?? '',
+      lastSignedInAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    },
+    { merge: true },
+  );
   return { app, db, user, profile: profile as UserProfile, childId };
 }
 
 export async function restoreFirebase(
   config: FirebaseWebConfig,
   childId = DEFAULT_CHILD_ID,
+  familyId = 'maymay',
 ): Promise<FirebaseConnection | null> {
   const app = await appFor(config);
   const auth = getAuth(app);
   await setPersistence(auth, browserLocalPersistence);
   await auth.authStateReady();
-  return auth.currentUser ? connectionFor(app, auth.currentUser, childId) : null;
+  return auth.currentUser ? connectionFor(app, auth.currentUser, childId, familyId) : null;
 }
 
 export async function connectFirebase(
@@ -128,6 +176,7 @@ export async function connectFirebase(
   caregiverEmail: string,
   password?: string,
   childId = DEFAULT_CHILD_ID,
+  familyId = 'maymay',
 ): Promise<FirebaseConnection> {
   const app = await appFor(config);
   const auth = getAuth(app);
@@ -145,7 +194,7 @@ export async function connectFirebase(
     user = credential.user;
   }
 
-  return connectionFor(app, user, childId);
+  return connectionFor(app, user, childId, familyId);
 }
 
 export async function registerFirebaseAccount(
@@ -153,6 +202,7 @@ export async function registerFirebaseAccount(
   displayName: string,
   caregiverEmail: string,
   password: string,
+  familyId = 'maymay',
 ) {
   const app = await appFor(config);
   const auth = getAuth(app);
@@ -171,6 +221,7 @@ export async function registerFirebaseAccount(
     } catch {
       // The login is still usable if Firebase cannot save the optional name.
     }
+    await ensurePendingProfile(getFirestore(app), credential.user, familyId);
     return {
       uid: credential.user.uid,
       email: credential.user.email ?? caregiverEmail,
@@ -183,6 +234,7 @@ export async function registerFirebaseAccount(
 export async function connectFirebaseWithGoogle(
   config: FirebaseWebConfig,
   childId = DEFAULT_CHILD_ID,
+  familyId = 'maymay',
 ): Promise<FirebaseConnection> {
   const app = await appFor(config);
   const auth = getAuth(app);
@@ -191,7 +243,54 @@ export async function connectFirebaseWithGoogle(
   const provider = new GoogleAuthProvider();
   provider.setCustomParameters({ prompt: 'select_account' });
   const credential = await signInWithPopup(auth, provider);
-  return connectionFor(app, credential.user, childId);
+  return connectionFor(app, credential.user, childId, familyId);
+}
+
+export async function listFamilyUsers(connection: FirebaseConnection) {
+  if (connection.profile.role !== 'master') {
+    throw new Error('Only a MayMay master can manage people.');
+  }
+  const snapshot = await getDocs(
+    query(collection(connection.db, 'users'), where('familyId', '==', connection.profile.familyId)),
+  );
+  const roleOrder: Record<UserRole, number> = { pending: 0, master: 1, caregiver: 2, viewer: 3 };
+  return snapshot.docs
+    .map((item) => {
+      const value = item.data() as Partial<UserProfile>;
+      return {
+        uid: item.id,
+        familyId: value.familyId ?? connection.profile.familyId,
+        role: value.role ?? 'pending',
+        active: value.active === true,
+        displayName: value.displayName || (item.id === connection.user.uid ? connection.user.displayName ?? undefined : undefined),
+        email: value.email || (item.id === connection.user.uid ? connection.user.email ?? undefined : undefined),
+      } satisfies ManagedUserProfile;
+    })
+    .sort((a, b) => roleOrder[a.role] - roleOrder[b.role] || (a.displayName || a.email || a.uid).localeCompare(b.displayName || b.email || b.uid));
+}
+
+export async function assignFamilyRole(
+  connection: FirebaseConnection,
+  userId: string,
+  role: 'master' | 'caregiver',
+) {
+  if (connection.profile.role !== 'master') {
+    throw new Error('Only a MayMay master can change access.');
+  }
+  if (userId === connection.user.uid) {
+    throw new Error('Use another master account to change your own access.');
+  }
+  await setDoc(
+    doc(connection.db, 'users', userId),
+    {
+      role,
+      active: true,
+      approvedBy: connection.user.uid,
+      approvedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    },
+    { merge: true },
+  );
 }
 
 function eventsCollection(connection: FirebaseConnection) {
@@ -437,8 +536,8 @@ function desiredEvents(entry: DailyEntry): DesiredEvent[] {
 }
 
 export async function pushEntry(connection: FirebaseConnection, entry: DailyEntry) {
-  if (connection.profile.role === 'viewer') {
-    throw new Error('Viewer accounts cannot change care records.');
+  if (!['master', 'caregiver'].includes(connection.profile.role)) {
+    throw new Error('This account can view care records but cannot change them.');
   }
 
   const events = eventsCollection(connection);
