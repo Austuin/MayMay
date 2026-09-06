@@ -39,6 +39,8 @@ Automatic installation is available in packaged MayMay installations. A source c
 
 Every push to `main` runs `.github/workflows/release.yml`, builds the complete offline installer, and publishes a versioned GitHub Release with its checksum.
 
+For an older installed copy that predates the host update command, email `MayMay-Legacy-Updater.zip`. The recipient extracts it and double-clicks `Update-MayMay.cmd` on the host computer. This one-time updater finds MayMay, downloads and verifies the latest release, preserves the Firebase Admin key, installs the release, and restarts into the permanently updateable version.
+
 ## Host terminal commands
 
 - `status` — Check Firestore and the web server.

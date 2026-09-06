@@ -33,6 +33,7 @@ jobs:
         run: |
           $version = "0.2.${env:GITHUB_RUN_NUMBER}"
           .\installer\Build-OfflineInstaller.ps1 -Version $version
+          .\installer\Build-LegacyUpdater.ps1
 
       - name: Publish GitHub release
         shell: pwsh
@@ -43,4 +44,6 @@ jobs:
           $tag = "v$version"
           $zip = "release\MayMay-Offline-Installer-v$version.zip"
           $checksum = "$zip.sha256"
-          gh release create $tag $zip $checksum --title "MayMay v$version" --generate-notes --latest
+          $legacyUpdater = "release\MayMay-Legacy-Updater.zip"
+          $legacyChecksum = "$legacyUpdater.sha256"
+          gh release create $tag $zip $checksum $legacyUpdater $legacyChecksum --title "MayMay v$version" --generate-notes --latest
