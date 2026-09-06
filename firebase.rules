@@ -1,0 +1,125 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function profile() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isActiveMember(familyId) {
+      return signedIn()
+        && profile().active == true
+        && profile().familyId == familyId;
+    }
+
+    function canTrack(familyId) {
+      return isActiveMember(familyId)
+        && profile().role in ['master', 'caregiver'];
+    }
+
+    function isMaster(familyId) {
+      return isActiveMember(familyId)
+        && profile().role == 'master';
+    }
+
+    match /system/{document=**} {
+      allow read, write: if false;
+    }
+
+    match /users/{userId} {
+      allow read: if signedIn()
+        && (request.auth.uid == userId
+          || (isActiveMember(resource.data.familyId)
+            && isMaster(resource.data.familyId)));
+
+      // The first Master is assigned by the trusted Admin setup command. After
+      // that, the Master can attach caregiver/viewer profiles to the family.
+      allow create: if isMaster(request.resource.data.familyId)
+        && request.resource.data.role in ['master', 'caregiver', 'viewer']
+        && request.resource.data.active is bool;
+      allow update: if (signedIn()
+          && request.auth.uid == userId
+          && request.resource.data.familyId == resource.data.familyId
+          && request.resource.data.role == resource.data.role
+          && request.resource.data.active == resource.data.active)
+        || (isMaster(resource.data.familyId)
+          && request.resource.data.familyId == resource.data.familyId
+          && request.resource.data.role in ['master', 'caregiver', 'viewer']
+          && request.resource.data.active is bool);
+      allow delete: if false;
+    }
+
+    match /families/{familyId} {
+      allow read: if isActiveMember(familyId);
+      allow create, update: if isMaster(familyId);
+      allow delete: if false;
+
+      match /children/{childId} {
+        allow read: if isActiveMember(familyId);
+        allow create, update: if isMaster(familyId);
+        allow delete: if false;
+
+        match /medications/{medicationId} {
+          allow read: if isActiveMember(familyId);
+          allow create, update: if isMaster(familyId);
+          allow delete: if false;
+        }
+
+        match /events/{eventId} {
+          allow read: if isActiveMember(familyId);
+          allow create: if canTrack(familyId)
+            && request.resource.data.schemaVersion == 1
+            && request.resource.data.childId == childId
+            && request.resource.data.createdBy == request.auth.uid
+            && request.resource.data.type in [
+              'mood',
+              'trigger',
+              'meltdown',
+              'meal',
+              'bathroom',
+              'medication',
+              'sleep',
+              'health',
+              'routine',
+              'note'
+            ]
+            && request.resource.data.localDate is string
+            && request.resource.data.occurredAt is timestamp
+            && request.resource.data.createdAt is timestamp
+            && request.resource.data.updatedAt is timestamp
+            && request.resource.data.data is map;
+          allow update: if canTrack(familyId)
+            && request.resource.data.schemaVersion == 1
+            && request.resource.data.childId == resource.data.childId
+            && request.resource.data.type == resource.data.type
+            && request.resource.data.createdBy == resource.data.createdBy
+            && request.resource.data.createdAt == resource.data.createdAt
+            && request.resource.data.localDate is string
+            && request.resource.data.occurredAt is timestamp
+            && request.resource.data.updatedAt is timestamp
+            && request.resource.data.data is map;
+          allow delete: if false;
+        }
+
+        match /daySummaries/{dayId} {
+          allow read: if isActiveMember(familyId);
+          allow create, update: if canTrack(familyId)
+            && request.resource.data.schemaVersion == 1
+            && request.resource.data.childId == childId
+            && request.resource.data.localDate == dayId;
+          allow delete: if false;
+        }
+      }
+    }
+
+    // Temporary compatibility for the current daily-record client. Remove this
+    // after the client migration to the event collection is complete.
+    match /users/{userId}/days/{dayId} {
+      allow read, write: if signedIn() && request.auth.uid == userId;
+    }
+  }
+}
