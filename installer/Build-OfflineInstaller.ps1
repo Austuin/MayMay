@@ -82,10 +82,14 @@ try {
   New-Item -ItemType Directory -Path (Join-Path $payloadApp 'public') -Force | Out-Null
   New-Item -ItemType Directory -Path (Join-Path $payloadApp 'scripts') -Force | Out-Null
   Copy-Item -LiteralPath (Join-Path $projectRoot 'scripts\host-terminal.mjs') -Destination (Join-Path $payloadApp 'scripts\host-terminal.mjs')
+  Copy-Item -LiteralPath (Join-Path $projectRoot 'scripts\install-update.ps1') -Destination (Join-Path $payloadApp 'scripts\install-update.ps1')
   Copy-Item -LiteralPath (Join-Path $projectRoot 'scripts\provision-firestore.mjs') -Destination (Join-Path $payloadApp 'scripts\provision-firestore.mjs')
   Copy-Item -LiteralPath (Join-Path $projectRoot 'firebase.rules') -Destination (Join-Path $payloadApp 'firebase.rules')
   Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'runtime\package.json') -Destination (Join-Path $payloadApp 'package.json')
   Copy-Item -LiteralPath $runtimeLock -Destination (Join-Path $payloadApp 'package-lock.json')
+  @{ version = $Version; repository = 'Austuin/MayMay' } |
+    ConvertTo-Json |
+    Set-Content -LiteralPath (Join-Path $payloadApp 'maymay-version.json') -Encoding utf8
 
   Push-Location $payloadApp
   try {

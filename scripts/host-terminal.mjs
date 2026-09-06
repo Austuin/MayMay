@@ -1,8 +1,9 @@
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { access, readFile, readdir, rename, stat, writeFile } from 'node:fs/promises';
+import { access, mkdtemp, readFile, readdir, rename, stat, writeFile } from 'node:fs/promises';
 import { createServer, request as httpRequest } from 'node:http';
-import { homedir, networkInterfaces } from 'node:os';
+import { homedir, networkInterfaces, tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
@@ -15,13 +16,92 @@ import multicastDns from 'multicast-dns';
 const PROJECT_ID = 'maymaydata-a6fda';
 const FAMILY_ID = 'maymay';
 const CHILD_ID = 'maymay';
+const UPDATE_REPOSITORY = 'Austuin/MayMay';
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const INSTALL_ROOT = dirname(ROOT);
 const RUNTIME_FILE = join(ROOT, 'public', 'maymay-runtime.json');
+const VERSION_FILE = join(ROOT, 'maymay-version.json');
 const INSTALLED_CREDENTIALS = join(ROOT, 'config', 'firebase-admin.json');
 const STATIC_ROOT = join(ROOT, 'dist', 'client');
 const VINEXT_CLI = join(ROOT, 'node_modules', 'vinext', 'dist', 'cli.js');
 const TERMINAL_THEME = '\u001B[40m\u001B[96m';
 const TERMINAL_RESET = '\u001B[0m';
+const IS_INSTALLED = resolve(process.execPath).toLowerCase() === resolve(INSTALL_ROOT, 'runtime', 'node.exe').toLowerCase();
+
+async function readCurrentVersion() {
+  for (const path of [VERSION_FILE, join(ROOT, 'package.json')]) {
+    try {
+      const value = JSON.parse(await readFile(path, 'utf8'));
+      if (typeof value.version === 'string' && /^\d+\.\d+\.\d+$/.test(value.version)) {
+        return value.version;
+      }
+    } catch {
+      // Installed builds carry a version file; source runs fall back to package.json.
+    }
+  }
+  return '0.0.0';
+}
+
+function compareVersions(left, right) {
+  const leftParts = left.split('.').map(Number);
+  const rightParts = right.split('.').map(Number);
+  for (let index = 0; index < 3; index += 1) {
+    if (leftParts[index] !== rightParts[index]) return leftParts[index] - rightParts[index];
+  }
+  return 0;
+}
+
+async function latestUpdate(currentVersion) {
+  const response = await fetch(`https://api.github.com/repos/${UPDATE_REPOSITORY}/releases/latest`, {
+    headers: {
+      Accept: 'application/vnd.github+json',
+      'User-Agent': `MayMay-Host/${currentVersion}`,
+      'X-GitHub-Api-Version': '2022-11-28',
+    },
+    signal: AbortSignal.timeout(20000),
+  });
+  if (response.status === 404) {
+    throw new Error('No MayMay update release is published yet, or the GitHub repository is not public.');
+  }
+  if (!response.ok) {
+    throw new Error(`GitHub update check failed (${response.status}). Try again later.`);
+  }
+  const release = await response.json();
+  const version = String(release.tag_name ?? '').replace(/^v/, '');
+  if (!/^\d+\.\d+\.\d+$/.test(version)) {
+    throw new Error('The latest GitHub release does not have a valid MayMay version tag.');
+  }
+  const zipName = `MayMay-Offline-Installer-v${version}.zip`;
+  const assets = Array.isArray(release.assets) ? release.assets : [];
+  const packageAsset = assets.find((asset) => asset.name === zipName);
+  const checksumAsset = assets.find((asset) => asset.name === `${zipName}.sha256`);
+  if (!packageAsset?.browser_download_url || !checksumAsset?.browser_download_url) {
+    throw new Error('The latest release is missing its installer or checksum.');
+  }
+  return {
+    available: compareVersions(version, currentVersion) > 0,
+    version,
+    pageUrl: release.html_url,
+    packageUrl: packageAsset.browser_download_url,
+    checksumUrl: checksumAsset.browser_download_url,
+  };
+}
+
+async function downloadBytes(url, maximumBytes = 250 * 1024 * 1024) {
+  const response = await fetch(url, {
+    headers: { 'User-Agent': 'MayMay-Host-Updater' },
+    redirect: 'follow',
+    signal: AbortSignal.timeout(120000),
+  });
+  if (!response.ok) throw new Error(`Update download failed (${response.status}).`);
+  const declaredSize = Number(response.headers.get('content-length') || 0);
+  if (declaredSize > maximumBytes) throw new Error('The update package is unexpectedly large.');
+  const bytes = Buffer.from(await response.arrayBuffer());
+  if (bytes.length === 0 || bytes.length > maximumBytes) {
+    throw new Error('The update download has an invalid size.');
+  }
+  return bytes;
+}
 
 function plainTerminalText(value) {
   return String(value)
@@ -421,6 +501,10 @@ async function stopServer(server) {
 
 function showMenu() {
   console.log('\nHost commands');
+  const updateLabel = pendingUpdate?.available
+    ? `[ Install update v${pendingUpdate.version} ]`
+    : '[ Check for updates ]';
+  console.log(`  update                  ${updateLabel}`);
   console.log('  status                  Check the database and web server');
   console.log('  users                   List Authentication users and MayMay roles');
   console.log('  master EMAIL_OR_UID     Assign the Master role');
@@ -437,6 +521,8 @@ function authUserFor(identifier) {
   return identifier.includes('@') ? auth.getUserByEmail(identifier) : auth.getUser(identifier);
 }
 
+const currentVersion = await readCurrentVersion();
+let pendingUpdate = null;
 const credentialsPath = await findCredentials();
 const serviceAccount = JSON.parse(await readFile(credentialsPath, 'utf8'));
 if (serviceAccount.project_id !== PROJECT_ID) {
@@ -452,6 +538,7 @@ const db = getFirestore(adminApp);
 process.title = 'MayMay Host';
 if (process.stdout.isTTY) writeTerminal('\u001B[2J\u001B[H');
 console.log('MayMay Host');
+console.log(`Version: ${currentVersion}${IS_INSTALLED ? '' : ' (source workspace)'}`);
 console.log(`Project: ${PROJECT_ID}`);
 console.log(`Admin key: ${basename(credentialsPath)} (host only)`);
 console.log('Preparing Firestore…');
@@ -482,11 +569,78 @@ terminal.on('line', async (line) => {
   handling = true;
   const [command = '', identifier = ''] = line.trim().split(/\s+/, 2);
   try {
-    if (command === 'status') {
+    if (command === 'update' || command === 'check-update' || command === 'install-update') {
+      const wantsInstall = command === 'install-update' || (command === 'update' && pendingUpdate?.available);
+      if (!wantsInstall) {
+        console.log('Checking GitHub for a newer MayMay release…');
+        pendingUpdate = await latestUpdate(currentVersion);
+        if (pendingUpdate.available) {
+          console.log(`MayMay v${pendingUpdate.version} is available.`);
+          console.log('The update action is now [ Install update ]. Type update again to install and restart.');
+        } else {
+          console.log(`MayMay is up to date (v${currentVersion}).`);
+        }
+        showMenu();
+      } else {
+        if (!pendingUpdate?.available) pendingUpdate = await latestUpdate(currentVersion);
+        if (!pendingUpdate.available) {
+          console.log(`MayMay is already up to date (v${currentVersion}).`);
+        } else if (!IS_INSTALLED) {
+          console.log('Automatic installation is available from an installed MayMay Host.');
+          console.log(`This source workspace can be updated with Git. Release: ${pendingUpdate.pageUrl}`);
+        } else {
+          console.log(`Downloading MayMay v${pendingUpdate.version}…`);
+          const [packageBytes, checksumBytes] = await Promise.all([
+            downloadBytes(pendingUpdate.packageUrl),
+            downloadBytes(pendingUpdate.checksumUrl, 64 * 1024),
+          ]);
+          const expectedHash = checksumBytes.toString('utf8').match(/\b[a-f\d]{64}\b/i)?.[0]?.toLowerCase();
+          const actualHash = createHash('sha256').update(packageBytes).digest('hex');
+          if (!expectedHash || expectedHash !== actualHash) {
+            throw new Error('The downloaded update failed its SHA-256 safety check. Nothing was installed.');
+          }
+          const updateDirectory = await mkdtemp(join(tmpdir(), 'MayMay-Update-'));
+          const packagePath = join(updateDirectory, `MayMay-Offline-Installer-v${pendingUpdate.version}.zip`);
+          await writeFile(packagePath, packageBytes, { mode: 0o600 });
+          const updaterScript = join(ROOT, 'scripts', 'install-update.ps1');
+          await access(updaterScript);
+          const powershell = join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+          const helper = spawn(
+            powershell,
+            [
+              '-NoProfile',
+              '-ExecutionPolicy',
+              'Bypass',
+              '-WindowStyle',
+              'Hidden',
+              '-File',
+              updaterScript,
+              '-PackagePath',
+              packagePath,
+              '-InstallRoot',
+              INSTALL_ROOT,
+              '-ParentProcessId',
+              String(process.pid),
+            ],
+            { detached: true, stdio: 'ignore', windowsHide: true },
+          );
+          await new Promise((resolvePromise, reject) => {
+            helper.once('spawn', resolvePromise);
+            helper.once('error', reject);
+          });
+          helper.unref();
+          console.log('Update verified. MayMay will close, install it, and restart automatically.');
+          terminal.close();
+          return;
+        }
+      }
+    } else if (command === 'status') {
       const schema = await db.doc('system/schema').get();
       console.log(`Database: ${schema.exists ? 'ready' : 'schema missing'}`);
       console.log(`Web server: ${server.exitCode === null ? 'running' : 'stopped'}`);
       console.log(`Friendly address: http://maymay.local${friendlyPort === 80 ? '' : ':3000'}/`);
+      console.log(`Version: ${currentVersion}`);
+      if (pendingUpdate?.available) console.log(`Update: v${pendingUpdate.version} ready to install`);
     } else if (command === 'users') {
       const result = await auth.listUsers(1000);
       const profiles = await db.getAll(...result.users.map((user) => db.doc(`users/${user.uid}`)));

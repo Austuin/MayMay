@@ -31,9 +31,18 @@ npm run host -- --credentials 'C:\path\to\your-firebase-adminsdk.json'
 
 Keep the terminal open while MayMay is in use. Type `quit` to stop the website safely.
 
+## Updates
+
+The host terminal has one update action. Type `update` to check the latest GitHub release. When a newer release is found, the action changes to **Install update**; type `update` again to download it, verify its SHA-256 checksum, install it, and restart MayMay.
+
+Automatic installation is available in packaged MayMay installations. A source checkout reports the release link instead so Git-managed source files are never overwritten. The GitHub repository must be public for installed hosts to check releases without storing a GitHub credential.
+
+Every push to `main` runs `.github/workflows/release.yml`, builds the complete offline installer, and publishes a versioned GitHub Release with its checksum.
+
 ## Host terminal commands
 
 - `status` — Check Firestore and the web server.
+- `update` — Check for an update, or install it when one is available.
 - `users` — List Firebase Authentication users and their MayMay roles.
 - `master EMAIL_OR_UID` — Assign the Master role to an Authentication user.
 - `caregiver EMAIL_OR_UID` — Approve a registered caregiver account.

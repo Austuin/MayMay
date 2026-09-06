@@ -38,3 +38,8 @@ WINDOWS FIREWALL
 ----------------
 On first launch, allow Node.js on Private networks when Windows asks. Do not
 enable it for Public networks.
+
+UPDATES
+-------
+In the MayMay Host terminal, type "update" to check GitHub. If an update is
+available, type "update" again to verify it, install it, and restart MayMay.

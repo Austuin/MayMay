@@ -1,0 +1,46 @@
+name: Build MayMay update
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: maymay-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - name: Check out MayMay
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install build dependencies
+        run: npm ci
+
+      - name: Build offline update package
+        shell: pwsh
+        run: |
+          $version = "0.2.${env:GITHUB_RUN_NUMBER}"
+          .\installer\Build-OfflineInstaller.ps1 -Version $version
+
+      - name: Publish GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = "0.2.${env:GITHUB_RUN_NUMBER}"
+          $tag = "v$version"
+          $zip = "release\MayMay-Offline-Installer-v$version.zip"
+          $checksum = "$zip.sha256"
+          gh release create $tag $zip $checksum --title "MayMay v$version" --generate-notes --latest
