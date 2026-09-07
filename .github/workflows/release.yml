@@ -2,9 +2,9 @@ name: Build MayMay update
 
 on:
   push:
-    branches: [main]
+    branches: [main, DevBranch]
   pull_request:
-    branches: [main]
+    branches: [main, DevBranch]
   workflow_dispatch:
 
 permissions:
@@ -37,7 +37,7 @@ jobs:
         run: npm run typecheck
 
   release:
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     needs: test
     runs-on: windows-latest
     steps:
