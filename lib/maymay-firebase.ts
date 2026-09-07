@@ -409,14 +409,14 @@ export async function pullRemoteEntries(connection: FirebaseConnection) {
   return [...entries.values()].sort((a, b) => a.date.localeCompare(b.date));
 }
 
-type DesiredEvent = {
+export type DesiredEvent = {
   id: string;
   type: string;
   occurredAt: Date;
   data: Record<string, unknown>;
 };
 
-function desiredEvents(entry: DailyEntry): DesiredEvent[] {
+export function desiredEvents(entry: DailyEntry): DesiredEvent[] {
   const desired: DesiredEvent[] = [];
   const moodTimes = { morning: '08:00', afternoon: '14:00', evening: '20:00' };
   for (const period of ['morning', 'afternoon', 'evening'] as const) {

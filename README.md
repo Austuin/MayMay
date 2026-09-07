@@ -37,7 +37,7 @@ The host terminal has one update action. Type `update` to check the latest GitHu
 
 Automatic installation is available in packaged MayMay installations. A source checkout reports the release link instead so Git-managed source files are never overwritten. The GitHub repository must be public for installed hosts to check releases without storing a GitHub credential.
 
-Every push to `main` runs `.github/workflows/release.yml`, builds the complete offline installer, and publishes a versioned GitHub Release with its checksum.
+Pull requests and pushes to `main` run the automated input tests and TypeScript checks. A release is built and published only after those checks pass on `main`.
 
 For an older installed copy that predates the host update command, email `MayMay-Legacy-Updater.zip`. The recipient extracts it and double-clicks `Update-MayMay.cmd` on the host computer. This one-time updater finds MayMay, downloads and verifies the latest release, preserves the Firebase Admin key, installs the release, and restarts into the permanently updateable version.
 
@@ -105,6 +105,10 @@ Event types include mood, trigger, meltdown, meal, bathroom, medication, sleep, 
 Caregiver devices load and cache a rolling three-year history. Older event documents remain in Firestore and can be retained for future archival or reporting without slowing the everyday app.
 
 Prediction inputs use consistent categories wherever practical: meal outcomes per meal, mood periods and tags, school status, sleep quality, bathroom status, medication status, Health status, and timestamped possible-trigger observations. Free-text fields remain optional context. Insights report personal associations and must not be treated as proof of causation or medical advice.
+
+## Automated tests
+
+Run `npm test` to exercise every daily tracking field, including possible-trigger and meltdown add/edit/remove flows. The tests mock Firebase, verify the saved local record and Firestore event mapping, then remove all temporary test data. They never write test records to the real MayMay database.
 
 ## Admin key safety
 
