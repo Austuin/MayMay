@@ -33,11 +33,20 @@ jobs:
       - name: Test all user inputs
         run: npm test
 
+      - name: Set up Java for isolated Firestore tests
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Test caregiver concurrency and database access rules
+        run: npm run test:rules
+
       - name: Type-check the application
         run: npm run typecheck
 
   release:
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: test
     runs-on: windows-latest
     steps:

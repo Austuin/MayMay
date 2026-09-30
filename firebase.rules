@@ -82,8 +82,22 @@ service cloud.firestore {
         }
 
         match /events/{eventId} {
+          function hasSaveReceipt() {
+            let mutationId = request.resource.data.mutationId;
+            let receipt = getAfter(/databases/$(database)/documents/families/$(familyId)/children/$(childId)/events/$(eventId)/mutations/$(mutationId)).data;
+            return request.resource.data.syncVersion == 2
+              && request.resource.data.updatedBy == request.auth.uid
+              && request.resource.data.updatedAt == request.time
+              && receipt.createdBy == request.auth.uid
+              && receipt.createdAt == request.time
+              && receipt.commitId == mutationId
+              && receipt.revision == request.resource.data.revision;
+          }
+
           allow read: if isActiveMember(familyId);
           allow create: if canTrack(familyId)
+            && hasSaveReceipt()
+            && request.resource.data.revision == 1
             && request.resource.data.schemaVersion == 1
             && request.resource.data.childId == childId
             && request.resource.data.createdBy == request.auth.uid
@@ -105,16 +119,32 @@ service cloud.firestore {
             && request.resource.data.updatedAt is timestamp
             && request.resource.data.data is map;
           allow update: if canTrack(familyId)
+            && hasSaveReceipt()
+            && request.resource.data.revision == resource.data.get('revision', 0) + 1
             && request.resource.data.schemaVersion == 1
             && request.resource.data.childId == resource.data.childId
             && request.resource.data.type == resource.data.type
             && request.resource.data.createdBy == resource.data.createdBy
             && request.resource.data.createdAt == resource.data.createdAt
-            && request.resource.data.localDate is string
+            && request.resource.data.localDate == resource.data.localDate
             && request.resource.data.occurredAt is timestamp
             && request.resource.data.updatedAt is timestamp
             && request.resource.data.data is map;
           allow delete: if false;
+
+          match /mutations/{mutationId} {
+            allow read: if isActiveMember(familyId);
+            allow create: if canTrack(familyId)
+              && request.resource.data.keys().hasOnly(['commitId', 'revision', 'createdBy', 'createdAt'])
+              && request.resource.data.createdBy == request.auth.uid
+              && request.resource.data.createdAt == request.time
+              && request.resource.data.revision is int
+              && getAfter(/databases/$(database)/documents/families/$(familyId)/children/$(childId)/events/$(eventId)).data.mutationId == request.resource.data.commitId
+              && getAfter(/databases/$(database)/documents/families/$(familyId)/children/$(childId)/events/$(eventId)).data.revision == request.resource.data.revision
+              && getAfter(/databases/$(database)/documents/families/$(familyId)/children/$(childId)/events/$(eventId)).data.updatedBy == request.auth.uid
+              && getAfter(/databases/$(database)/documents/families/$(familyId)/children/$(childId)/events/$(eventId)).data.updatedAt == request.time;
+            allow update, delete: if false;
+          }
         }
 
         match /daySummaries/{dayId} {
@@ -128,15 +158,12 @@ service cloud.firestore {
       }
     }
 
-    // Temporary compatibility for the current daily-record client. Remove this
-    // after the client migration to the event collection is complete.
+    // Old daily snapshots remain readable for recovery, but cannot overwrite history.
     match /users/{userId}/days/{dayId} {
       allow read: if signedIn()
         && request.auth.uid == userId
         && isActiveMember('maymay');
-      allow write: if signedIn()
-        && request.auth.uid == userId
-        && canTrack('maymay');
+      allow write: if false;
     }
   }
 }
