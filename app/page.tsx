@@ -59,8 +59,6 @@ import {
   disconnectFirebase,
   listFamilyUsers,
   loadRuntimeConfig,
-  pullRemoteEntries,
-  pushEntry,
   registerFirebaseAccount,
   restoreFirebase,
   type FirebaseConnection,
@@ -68,7 +66,8 @@ import {
   type MayMayRuntimeConfig,
 } from '@/lib/maymay-firebase';
 import { meltdownEstimate, summarizeEntries } from '@/lib/maymay-insights';
-import { loadLocalEntries, mergeEntries, saveLocalEntries } from '@/lib/maymay-storage';
+import { useCareSync } from '@/hooks/use-care-sync';
+import { hasLegacyCareCache } from '@/lib/maymay-sync-storage';
 import {
   createPossibleTrigger,
   createMeltdown,
@@ -88,6 +87,15 @@ const moods = [
   { score: 2, label: 'Struggling', face: '😟', tone: 'bg-orange-100 text-orange-950' },
   { score: 1, label: 'Hard', face: '😣', tone: 'bg-rose-100 text-rose-950' },
 ];
+
+function ConflictValues({ value }: { value: Record<string, unknown> | null }) {
+  if (!value) return <p className="text-sm">Removed / not recorded</p>;
+  const fields = Object.entries(value).filter(([key, item]) => !['id', 'eventId'].includes(key) && item !== '' && item != null);
+  return <dl className="mt-1 space-y-1 text-sm">{fields.map(([key, item]) => <div key={key}>
+    <dt className="inline font-medium capitalize">{key.replace(/([A-Z])/g, ' $1')}: </dt>
+    <dd className="inline break-words">{Array.isArray(item) ? item.join(', ') : String(item)}</dd>
+  </div>)}</dl>;
+}
 
 const moodTags = ['Calm', 'Energetic', 'Tired', 'Anxious', 'Irritable', 'Sad', 'Excited', 'Hard to tell'];
 const schoolOptions = ['Attended', 'Stayed home', 'Not scheduled'];
@@ -548,9 +556,7 @@ export default function HomePage() {
   const historyCutoff = historyCutoffDate();
   const [activeTab, setActiveTab] = useState('today');
   const [selectedDate, setSelectedDate] = useState(today);
-  const [entries, setEntries] = useState<DailyEntry[]>([]);
   const [hydrated, setHydrated] = useState(false);
-  const [saveMessage, setSaveMessage] = useState('Ready');
   const [syncState, setSyncState] = useState<SyncState>('starting');
   const [runtimeConfig, setRuntimeConfig] = useState<MayMayRuntimeConfig | null>(null);
   const [firebaseConnection, setFirebaseConnection] = useState<FirebaseConnection | null>(null);
@@ -567,13 +573,15 @@ export default function HomePage() {
   const [peopleActionId, setPeopleActionId] = useState('');
   const [peopleMessage, setPeopleMessage] = useState('');
   const connectionRef = useRef<FirebaseConnection | null>(null);
-  const pendingDates = useRef(new Set<string>());
-  const entriesRef = useRef<DailyEntry[]>([]);
   const selectedDateRef = useRef(selectedDate);
   const sleepRef = useRef<HTMLDivElement>(null);
   const foodRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLDivElement>(null);
   const meltdownRef = useRef<HTMLDivElement>(null);
+
+  const careSync = useCareSync(firebaseConnection);
+  const { entries, getEntries, replaceEntry, message: saveMessage } = careSync;
+  const [legacyCache, setLegacyCache] = useState(false);
 
   const entry = useMemo(
     () => entries.find((item) => item.date === selectedDate) ?? emptyEntry(selectedDate),
@@ -600,18 +608,14 @@ export default function HomePage() {
   const progressCount = progressItems.filter(Boolean).length;
 
   useEffect(() => {
-    entriesRef.current = entries;
-  }, [entries]);
-  useEffect(() => {
     selectedDateRef.current = selectedDate;
   }, [selectedDate]);
 
   useEffect(() => {
     let alive = true;
-    const local = loadLocalEntries();
     queueMicrotask(() => {
       if (!alive) return;
-      setEntries(local);
+      setLegacyCache(hasLegacyCareCache());
       setHydrated(true);
     });
     const start = async () => {
@@ -637,22 +641,15 @@ export default function HomePage() {
         if (connection.profile.role === 'pending') {
           connectionRef.current = connection;
           setFirebaseConnection(connection);
-          setEntries([]);
           setCaregiverEmail(connection.user.email ?? '');
           setSyncState('connected');
-          setSaveMessage('Waiting for role assignment');
           return;
         }
-        const remote = await pullRemoteEntries(connection);
         if (!alive) return;
         connectionRef.current = connection;
         setFirebaseConnection(connection);
-        const merged = mergeEntries(local, remote);
-        setEntries(merged);
-        saveLocalEntries(merged);
         setCaregiverEmail(connection.user.email ?? '');
         setSyncState('connected');
-        setSaveMessage('Connected and up to date');
       } catch (error) {
         if (!alive) return;
         setAuthError(error instanceof Error ? error.message : 'Please sign in again.');
@@ -663,45 +660,9 @@ export default function HomePage() {
     return () => { alive = false; };
   }, []);
 
-  useEffect(() => {
-    if (!hydrated || pendingDates.current.size === 0) return;
-    setSaveMessage('Saving…');
-    const timer = window.setTimeout(async () => {
-      const dates = [...pendingDates.current];
-      pendingDates.current.clear();
-      const currentEntries = entriesRef.current;
-      saveLocalEntries(currentEntries);
-      const connection = connectionRef.current;
-      if (connection) {
-        try {
-          await Promise.all(
-            dates.map((date) => currentEntries.find((item) => item.date === date))
-              .filter((item): item is DailyEntry => Boolean(item))
-              .map((item) => pushEntry(connection, item)),
-          );
-          setSaveMessage('Saved locally and synced');
-        } catch {
-          setSaveMessage('Saved locally · sync will retry after your next change');
-          setSyncState('error');
-        }
-      } else {
-        setSaveMessage('Saved on this device');
-      }
-    }, 450);
-    return () => window.clearTimeout(timer);
-  }, [entries, hydrated]);
-
-  function replaceEntry(next: DailyEntry) {
-    pendingDates.current.add(next.date);
-    setEntries((current) =>
-      [...current.filter((item) => item.date !== next.date), next]
-        .sort((a, b) => a.date.localeCompare(b.date)),
-    );
-  }
-
   function updateEntry(patch: Partial<DailyEntry> | ((current: DailyEntry) => DailyEntry)) {
     if (isReadOnly) return;
-    const current = entriesRef.current.find((item) => item.date === selectedDate) ?? emptyEntry(selectedDate);
+    const current = getEntries().find((item) => item.date === selectedDate) ?? emptyEntry(selectedDate);
     const next = typeof patch === 'function' ? patch(current) : { ...current, ...patch };
     replaceEntry({ ...next, date: selectedDate, version: 3, updatedAt: new Date().toISOString() });
   }
@@ -836,25 +797,17 @@ export default function HomePage() {
       if (connection.profile.role === 'pending') {
         connectionRef.current = connection;
         setFirebaseConnection(connection);
-        setEntries([]);
         setCaregiverEmail(connection.user.email ?? caregiverEmail.trim());
         setCaregiverPassword('');
         setSyncState('connected');
-        setSaveMessage('Waiting for role assignment');
         return;
       }
-      const remote = await pullRemoteEntries(connection);
-      const merged = mergeEntries(entriesRef.current, remote);
       connectionRef.current = connection;
       setFirebaseConnection(connection);
-      setEntries(merged);
-      saveLocalEntries(merged);
-      if (connection.profile.role !== 'viewer') {
-        await Promise.all(merged.map((item) => pushEntry(connection, item)));
-      }
+      setCaregiverEmail(connection.user.email ?? '');
       setCaregiverPassword('');
+      setAccessMode('sign-in');
       setSyncState('connected');
-      setSaveMessage('Connected and up to date');
     } catch (error) {
       setAuthError(error instanceof Error ? error.message : 'Sign-in failed. Check the account details.');
       setSyncState('signed-out');
@@ -876,26 +829,17 @@ export default function HomePage() {
       if (connection.profile.role === 'pending') {
         connectionRef.current = connection;
         setFirebaseConnection(connection);
-        setEntries([]);
         setCaregiverEmail(connection.user.email ?? '');
         setAccessMode('sign-in');
         setSyncState('connected');
-        setSaveMessage('Waiting for role assignment');
         return;
       }
-      const remote = await pullRemoteEntries(connection);
-      const merged = mergeEntries(entriesRef.current, remote);
       connectionRef.current = connection;
       setFirebaseConnection(connection);
-      setEntries(merged);
-      saveLocalEntries(merged);
       setCaregiverEmail(connection.user.email ?? '');
-      if (connection.profile.role !== 'viewer') {
-        await Promise.all(merged.map((item) => pushEntry(connection, item)));
-      }
+      setCaregiverPassword('');
       setAccessMode('sign-in');
       setSyncState('connected');
-      setSaveMessage('Connected and up to date');
     } catch (error) {
       const code = (error as { code?: string })?.code;
       const message = code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request'
@@ -927,16 +871,19 @@ export default function HomePage() {
   }
 
   async function handleSignOut() {
-    if (connectionRef.current) await disconnectFirebase(connectionRef.current);
+    const connection = connectionRef.current;
+    careSync.stop();
     connectionRef.current = null;
     setFirebaseConnection(null);
-    setEntries([]);
     setPeople([]);
     setPeopleMessage('');
     setActiveTab('today');
     setCaregiverPassword('');
     setSyncState('signed-out');
-    setSaveMessage('Signed out');
+    if (connection) {
+      try { await disconnectFirebase(connection); }
+      catch { setAuthError('Sign-out could not finish. Please retry before sharing this device.'); }
+    }
   }
 
   useEffect(() => {
@@ -1021,7 +968,7 @@ export default function HomePage() {
               if (period?.score != null && (!Number.isInteger(period.score) || period.score < 1 || period.score > 5)) throw new Error('each mood score must be an integer from 1 to 5');
             }
             if (value.healthStatus && !healthOptions.includes(value.healthStatus)) throw new Error('healthStatus must be one of the available Health options');
-            const current = entriesRef.current.find((item) => item.date === value.date) ?? emptyEntry(value.date);
+            const current = getEntries().find((item) => item.date === value.date) ?? emptyEntry(value.date);
             const next = {
               ...current,
               moods: {
@@ -1035,14 +982,10 @@ export default function HomePage() {
               ...(typeof value.notes === 'string' ? { notes: value.notes } : {}),
               updatedAt: new Date().toISOString(),
             };
-            pendingDates.current.add(next.date);
-            setEntries((currentEntries) =>
-              [...currentEntries.filter((item) => item.date !== next.date), next]
-                .sort((a, b) => a.date.localeCompare(b.date)),
-            );
+            replaceEntry(next);
             setSelectedDate(value.date);
             setActiveTab('today');
-            return { saved: value.date, storage: connectionRef.current ? 'local-and-firestore' : 'local-device' };
+            return { queued: value.date, storage: 'local-draft', sync: 'pending' };
           },
         },
         { signal: lifecycle.signal },
@@ -1050,9 +993,10 @@ export default function HomePage() {
     };
     void register().catch(() => undefined);
     return () => lifecycle.abort();
-  }, []);
+  }, [getEntries, replaceEntry]);
 
-  if (!hydrated || syncState === 'starting' || syncState === 'connecting') {
+  if (!hydrated || syncState === 'starting' || syncState === 'connecting'
+    || (syncState === 'connected' && currentRole !== 'pending' && careSync.status === 'loading')) {
     return (
       <main className="access-shell">
         <output className="access-loading"><LoaderCircle className="animate-spin" /><span>Starting MayMay…</span></output>
@@ -1099,14 +1043,33 @@ export default function HomePage() {
             </div>
           </div>
           <div className="header-actions">
-            <div className="sync-pill" aria-live="polite" aria-label={`Data storage status: ${syncState === 'connected' ? 'Firestore synced' : 'saved locally; sync paused'}`}>
-              {syncState === 'connected' ? <Cloud /> : <CloudOff />}
-              <span>{syncState === 'connected' ? 'Firestore synced' : 'Saved locally · sync paused'}</span>
+            <div className="sync-pill" aria-live="polite" aria-label={`Data storage status: ${careSync.status === 'saved' ? 'Firestore synced' : 'sync pending'}`}>
+              {careSync.status === 'saved' ? <Cloud /> : <CloudOff />}
+              <span>{careSync.status === 'saved' ? 'Firestore synced' : 'Sync pending'}</span>
             </div>
             <Button variant="outline" size="icon-lg" aria-label="Sign out" onClick={handleSignOut}><LogOut /></Button>
           </div>
         </div>
       </header>
+
+      <div className="mx-auto max-w-[1160px] space-y-3 px-4 pt-4 sm:px-6 lg:px-8">
+        {careSync.status === 'error' && <div role="alert" className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-amber-950">
+          <p>{saveMessage}</p>
+          <Button variant="outline" className="mt-2" onClick={careSync.retry}>Retry sync</Button>
+        </div>}
+        {careSync.conflicts.map(conflict => <section key={conflict.eventId} aria-label={`Conflicting record for ${conflict.date}`} className="rounded-xl border border-amber-300 bg-card p-4">
+          <p className="font-semibold">Two edits to the same record · {conflict.date}</p>
+          <p className="text-sm text-muted-foreground">Your edit is kept on this device. The shared record has not been overwritten.</p>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <div><b>Saved version</b><ConflictValues value={conflict.remote} /></div>
+            <div><b>Your edit</b><ConflictValues value={conflict.local} /></div>
+          </div>
+          <Button variant="outline" className="mt-3" onClick={() => careSync.acceptSaved(conflict.eventId)}>Use saved version</Button>
+          <Button variant="outline" className="ml-2 mt-3" onClick={() => careSync.saveDraft(conflict.eventId)}>Save my edit instead</Button>
+          <p className="mt-2 text-sm text-muted-foreground">Choose which version to keep. If it changes again while you review, we will ask you to review it again.</p>
+        </section>)}
+        {legacyCache && <details className="text-sm text-muted-foreground"><summary>Previous device cache preserved</summary><p>Older local records have been kept on this device. They are not uploaded automatically because their account and saved versions cannot be verified. Shared records load from Firestore; any unsynced older notes need separate recovery.</p></details>}
+      </div>
 
       <Tabs value={activeTab} onValueChange={changeTab} className="mx-auto w-full max-w-[1160px] px-4 pb-28 pt-5 sm:px-6 sm:pb-10 lg:px-8">
         <TabsList className="top-nav" aria-label="MayMay sections">

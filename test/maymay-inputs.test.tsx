@@ -3,11 +3,15 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import HomePage from '@/app/page';
+import { entriesFromEvents } from '@/lib/maymay-events';
+import { careStorageScope, loadCareCache, loadPendingMutations } from '@/lib/maymay-sync-storage';
+import { projectEntries } from '@/lib/maymay-sync-model';
+import type { FirebaseConnection } from '@/lib/maymay-firebase';
 import { createMeltdown, createPossibleTrigger, localDateValue, type DailyEntry } from '@/lib/maymay-types';
 
 const firebaseMocks = vi.hoisted(() => {
   const connection = {
-    app: {},
+    app: { options: { projectId: 'test-project' } },
     db: {},
     childId: 'maymay',
     user: {
@@ -26,7 +30,9 @@ const firebaseMocks = vi.hoisted(() => {
 
   return {
     connection,
-    pushEntry: vi.fn(async () => undefined),
+    receive: null as null | ((events: any[]) => void),
+    records: [] as any[],
+    commit: vi.fn(),
     registerFirebaseAccount: vi.fn(async () => ({ uid: 'new-test-user', email: 'new@example.test' })),
     restoreFirebase: vi.fn(async () => connection),
   };
@@ -48,18 +54,23 @@ vi.mock('@/lib/maymay-firebase', () => ({
     familyId: 'maymay',
     childId: 'maymay',
   })),
-  pullRemoteEntries: vi.fn(async () => []),
-  pushEntry: firebaseMocks.pushEntry,
   registerFirebaseAccount: firebaseMocks.registerFirebaseAccount,
   restoreFirebase: firebaseMocks.restoreFirebase,
 }));
 
-const ENTRY_KEY = 'maymay.entries.v3';
+vi.mock('@/lib/maymay-sync-firebase', () => ({
+  watchCareEvents: vi.fn((_connection, receive) => {
+    firebaseMocks.receive = receive;
+    receive(firebaseMocks.records);
+    return () => { firebaseMocks.receive = null; };
+  }),
+  commitEventMutations: (...args: unknown[]) => firebaseMocks.commit(...args),
+}));
+const scope = () => careStorageScope(firebaseMocks.connection as unknown as FirebaseConnection);
 const secureContextCrypto = globalThis.crypto;
 
 function savedEntry(date: string) {
-  const entries = JSON.parse(localStorage.getItem(ENTRY_KEY) ?? '[]') as DailyEntry[];
-  return entries.find((entry) => entry.date === date);
+  return projectEntries(loadCareCache(scope()), loadPendingMutations(scope())).find(entry => entry.date === date);
 }
 
 async function chooseSelect(user: ReturnType<typeof userEvent.setup>, label: string, option: string) {
@@ -85,7 +96,17 @@ beforeEach(() => {
       getRandomValues: secureContextCrypto.getRandomValues.bind(secureContextCrypto),
     },
   });
-  firebaseMocks.pushEntry.mockClear();
+  firebaseMocks.records = [];
+  firebaseMocks.commit.mockReset();
+  firebaseMocks.commit.mockImplementation(async (_connection, mutations) => {
+    const last = mutations.at(-1);
+    const existing = firebaseMocks.records.find(event => event.id === last.eventId);
+    const value = last.after ?? existing ?? mutations.find((item: any) => item.after)?.after;
+    const record = { ...value, localDate: last.localDate, revision: (existing?.revision ?? 0) + 1, updatedAt: new Date().toISOString(), deletedAt: last.after ? null : 'deleted' };
+    firebaseMocks.records = [...firebaseMocks.records.filter(event => event.id !== last.eventId), record];
+    firebaseMocks.receive?.(firebaseMocks.records);
+    return record;
+  });
   firebaseMocks.registerFirebaseAccount.mockClear();
   firebaseMocks.restoreFirebase.mockResolvedValue(firebaseMocks.connection);
 });
@@ -225,7 +246,9 @@ describe('MayMay daily input coverage', () => {
       whatHelped: 'Quiet / space',
       notes: 'Test event notes',
     });
-    expect(firebaseMocks.pushEntry).toHaveBeenCalled();
+    await waitFor(() => expect(firebaseMocks.commit).toHaveBeenCalled());
+    await waitFor(() => expect(loadPendingMutations(scope())).toHaveLength(0), { timeout: 5_000 });
+    expect(entriesFromEvents(firebaseMocks.records).find(entry => entry.date === date)?.meltdowns[0]?.notes).toBe('Test event notes');
 
     await user.click(within(triggerPanel).getByRole('button', { name: 'Remove possible trigger 1' }));
     await user.click(within(meltdownPanel).getByRole('button', { name: 'Remove meltdown 1' }));
@@ -234,7 +257,11 @@ describe('MayMay daily input coverage', () => {
       expect(savedEntry(date)?.meltdowns).toHaveLength(0);
     }, { timeout: 3_000 });
 
+    await waitFor(() => expect(loadPendingMutations(scope())).toHaveLength(0), { timeout: 5_000 });
+    const remote = entriesFromEvents(firebaseMocks.records).find(entry => entry.date === date);
+    expect(remote?.possibleTriggers).toHaveLength(0);
+    expect(remote?.meltdowns).toHaveLength(0);
     localStorage.clear();
-    expect(localStorage.getItem(ENTRY_KEY)).toBeNull();
+    expect(localStorage.length).toBe(0);
   });
 });
