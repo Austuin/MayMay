@@ -110,6 +110,18 @@ Prediction inputs use consistent categories wherever practical: meal outcomes pe
 
 Run `npm test` to exercise every daily tracking field, including possible-trigger and meltdown add/edit/remove flows. The tests mock Firebase, verify the saved local record and Firestore event mapping, then remove all temporary test data. They never write test records to the real MayMay database.
 
+Run `npm run test:rules` with Java 21 or later to test simultaneous caregivers and the actual Firestore rules in a local emulator using the isolated `demo-maymay-test` project. These checks also run in GitHub Actions. The test runner refuses to run without the local emulator. Java and Firebase test tools are development dependencies and are not included in the installed MayMay runtime.
+
+## Shared editing and the overwrite-safety update
+
+MayMay saves only the events changed by an input, never a replacement snapshot of the whole day. Each save checks the event's revision in a Firestore transaction. Unrelated edits from different caregivers are preserved. Concurrent changes to the same event show the shared value and the local draft for review; choose **Use saved version** or **Save my edit instead**. Choosing a draft still checks the version shown in the comparison, so another intervening change requires another review. An explicit removal affects only that event and preserves its tombstone.
+
+Unsent edits are saved before display, in a durable queue separated by Firebase project, account, family, and person. Failed saves retry while the app is open, on reconnection, or with **Retry sync**. Save receipts prevent a lost acknowledgement or a second tab from replaying an already committed edit. Sign-in never uploads cached whole days, and sign-out stops dispatching further queued writes. Edits already submitted to the server can finish for the original account; unsent edits remain available only when that account signs in again.
+
+This update does not rewrite existing care records. Legacy events gain revision metadata when first edited. Older unscoped browser caches are preserved under their original keys (`maymay.entries.v3`, `maymay.entries.v2`, and `trackerV11`) for recovery, but are never automatically assigned to an account or uploaded. A notice appears when such a cache exists. Do not clear browser storage if there may be unsynced notes from before the update; recover and compare them separately with shared history.
+
+Install through the normal host **update** command, then refresh caregiver browser tabs. The updated host publishes the accompanying rules before serving the updated app. Those rules require the new save protocol and block old-client event writes and legacy daily-record writes, including attempts to remove newer records. Keep the updated rules in place: reverting to an old host package that republishes old rules would remove this protection. No production provisioning or data migration is performed by the tests.
+
 ## Admin key safety
 
 The downloaded JSON file containing `private_key`, `client_email`, or `type: "service_account"` is a powerful server credential. Keep it on the host computer only.
