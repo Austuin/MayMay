@@ -22,7 +22,7 @@ const mocks = vi.hoisted(() => {
   };
   return {
     empty, family, ready,
-    restoreFirebase: vi.fn(async () => empty),
+    restoreFirebase: vi.fn(async (): Promise<typeof empty | null> => empty),
     registerFirebaseAccount: vi.fn(async () => empty),
     createFamily: vi.fn(async () => family),
     createPatient: vi.fn(async () => ready),
