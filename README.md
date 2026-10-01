@@ -2,10 +2,12 @@
 
 MayMay is a private caregiver-facing tracker for morning, afternoon, and evening mood, routines, meals, sleep, medications, bathroom notes, triggers, and meltdown events.
 
+> **Development status:** Stage B adds account, family, and patient setup on `DevBranch`. The host provisioning script and live database cutover are still pending. Do not run this branch's host against the live Firebase project: host startup publishes `firebase.rules`. Production remains on `main` until the staged rollout is approved.
+
 The application has two surfaces:
 
-- The browser is the caregiver workspace. It contains only sign-in, tracking, history, and insights.
-- The host terminal owns Firebase configuration, database provisioning, account roles, and the web server. The Firebase Admin key never reaches a browser.
+- The browser is the caregiver workspace for sign-in, family and patient setup, tracking, history, and insights.
+- The host terminal owns Firebase configuration, database provisioning, and the web server. The Firebase Admin key never reaches a browser.
 
 ## Start MayMay on the host computer
 
@@ -54,16 +56,11 @@ For an older installed copy that predates the host update command, email `MayMay
 - `restart` — Restart the caregiver website.
 - `quit` — Stop MayMay.
 
-## Add a caregiver
+## Stage B account and family setup
 
-1. Give the caregiver `http://maymay.local/`, or the numbered fallback address printed by the host terminal.
-2. The caregiver selects **Continue with Google** and chooses their Google account. Firebase creates their login automatically the first time. **Create account** remains available for an email/password login.
-3. The new account receives a locked pending profile. It cannot see care records while waiting for a role.
-4. A signed-in Master opens **Settings** in MayMay. The role controls are visible only to Masters.
-5. Under **Waiting for a role**, select **Make caregiver** or **Make master** beside the new person.
-6. The new person selects **Check access again**, or signs in again, to enter MayMay.
+A new account can be created with email/password or Google sign-in. The account then creates a family and becomes its first Primary caregiver. The Primary adds a patient; only the name is required. Birthdate, age, sex, ethnicity, and autism support level can be supplied during creation or edited later. An account can create multiple families and patients and switch between them. Care events remain scoped to the selected family and patient.
 
-The host terminal's `users`, `caregiver EMAIL`, and `master EMAIL` commands remain available as administrator fallbacks.
+Family Code requests, joining an existing family, and Primary approval are reserved for Stage C. The host terminal's older role commands and provisioning script still belong to the production v1 flow and must be updated before a release.
 
 ## Firebase requirements
 
@@ -76,22 +73,17 @@ The `maymaydata-a6fda` project needs:
 - A Firestore database.
 - The security rules from `firebase.rules` published in Firestore.
 
-The initial Master profile is created by the trusted host command:
-
-```text
-users/YOUR_FIREBASE_AUTH_UID
-  familyId: maymay
-  role: master
-  active: true
-```
+In Stage B, family creation atomically writes the family, its first active Primary membership, and the creator's family index. Patient creation atomically writes the patient, the creator's patient access, and their patient index.
 
 ## Firestore structure
 
 Every occurrence is stored as its own event document:
 
 ```text
-families/maymay
-  children/maymay
+families/{familyId}
+  memberships/{firebaseAuthenticationUid}
+  children/{patientId}
+    access/{firebaseAuthenticationUid}
     events/{eventId}
     medications/{medicationId}
     daySummaries/{YYYY-MM-DD}

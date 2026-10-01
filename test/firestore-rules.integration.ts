@@ -4,6 +4,7 @@ import { assertFails, assertSucceeds, initializeTestEnvironment, type RulesTestE
 import { deleteDoc, doc, getDoc, setDoc, Timestamp, updateDoc, type Firestore } from 'firebase/firestore';
 import type { FirebaseConnection } from '../lib/maymay-firebase';
 import { createFamilyFoundation } from '../lib/maymay-access';
+import { createFamily, createPatient, selectFamilyPatient, updatePatient } from '../lib/maymay-firebase';
 import { commitEventMutations, recordFromDocument } from '../lib/maymay-sync-firebase';
 import { mutationsForEdit, SaveConflict, type EventMutation } from '../lib/maymay-sync-model';
 import { emptyEntry } from '../lib/maymay-types';
@@ -57,6 +58,39 @@ describe('multi-family access foundation', () => {
     ({ familyId: family, userId: uid, role, status });
   const patientGrant = (family: string, patient: string, uid: string, canAccess = true) =>
     ({ familyId: family, patientId: patient, userId: uid, relationship: 'support worker', canAccess });
+
+  it('creates an account family and patient, edits optional details, and switches between families', async () => {
+    const creatorDb = env.authenticatedContext('setup-user', { email: 'setup@example.test' }).firestore();
+    await assertSucceeds(setDoc(doc(creatorDb, 'users/setup-user'), {
+      userId: 'setup-user', name: 'Setup user', email: 'setup@example.test', familyIds: [],
+    }));
+    const session = {
+      app: { options: { projectId: 'demo-maymay-test' } }, db: creatorDb,
+      user: { uid: 'setup-user', email: 'setup@example.test', displayName: 'Setup user' },
+      profile: { familyId: '', role: 'pending', active: false }, childId: '', families: [],
+    } as unknown as FirebaseConnection;
+    const first = await createFamily(session, 'First family');
+    expect(first.profile.role).toBe('master');
+    expect(first.families.map(item => item.name)).toContain('First family');
+    const patient = await createPatient(first, first.profile.familyId, {
+      name: 'Sam', age: 8, sex: 'Female', ethnicity: 'Optional example',
+      autismLevel: 'Level 2', birthdate: '2018-01-02',
+    });
+    expect(patient.patient?.name).toBe('Sam');
+    expect(patient.patient?.ethnicity).toBe('Optional example');
+    const patientRef = doc(creatorDb, 'families', first.profile.familyId, 'children', patient.childId);
+    expect((await getDoc(patientRef)).data()?.birthdate).toBe('2018-01-02');
+    const edited = await updatePatient(patient, { name: 'Sam Updated', sex: 'Female' });
+    expect(edited.patient?.name).toBe('Sam Updated');
+    expect((await getDoc(patientRef)).data()?.ethnicity).toBeUndefined();
+    expect((await getDoc(patientRef)).data()?.birthdate).toBeUndefined();
+    const second = await createFamily(edited, 'Second family');
+    expect(second.families).toHaveLength(2);
+    expect(second.childId).toBe('');
+    const switched = selectFamilyPatient(second, first.profile.familyId, patient.childId);
+    expect(switched.patient?.name).toBe('Sam Updated');
+    await assertFails(getDoc(doc(db('outsider'), patientRef.path)));
+  });
 
   it('bootstraps only the creator as the first active Primary in one atomic write', async () => {
     const creatorDb = db('new-creator');

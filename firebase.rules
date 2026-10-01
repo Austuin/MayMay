@@ -27,10 +27,25 @@ service cloud.firestore {
         && getAfter(member(f, u)).data.role == 'Primary';
     }
     function validMembership(f, u) {
-      return request.resource.data.keys().hasOnly(['familyId', 'userId', 'role', 'status', 'requestedAt', 'dateJoined', 'approvedAt', 'approvedBy'])
+      return request.resource.data.keys().hasOnly(['familyId', 'userId', 'role', 'status', 'requestedAt', 'dateJoined', 'approvedAt', 'approvedBy', 'patientIds'])
         && request.resource.data.familyId == f && request.resource.data.userId == u
         && request.resource.data.role in ['Primary', 'Caregiver', 'Viewer']
-        && request.resource.data.status in ['Pending', 'Active', 'Rejected', 'Disabled'];
+        && request.resource.data.status in ['Pending', 'Active', 'Rejected', 'Disabled']
+        && request.resource.data.get('patientIds', []) is list;
+    }
+    function validPatient(f, p) {
+      return request.resource.data.keys().hasOnly(['patientId', 'familyId', 'name', 'dateCreated', 'dateUpdated', 'age', 'sex', 'ethnicity', 'autismLevel', 'birthdate'])
+        && request.resource.data.patientId == p
+        && request.resource.data.familyId == f
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.get('age', 0) is int
+        && request.resource.data.get('age', 0) >= 0
+        && request.resource.data.get('age', 0) <= 120
+        && request.resource.data.get('sex', '') is string
+        && request.resource.data.get('ethnicity', '') is string
+        && request.resource.data.get('autismLevel', '') is string
+        && request.resource.data.get('birthdate', '') is string;
     }
     function validAccess(f, p, u) {
       return request.resource.data.keys().hasOnly(['familyId', 'patientId', 'userId', 'relationship', 'canAccess'])
@@ -43,12 +58,14 @@ service cloud.firestore {
     match /users/{userId} {
       allow read: if signedIn() && request.auth.uid == userId;
       allow create: if signedIn() && request.auth.uid == userId
-        && request.resource.data.keys().hasOnly(['userId', 'name', 'email', 'dateCreated', 'dateUpdated'])
+        && request.resource.data.keys().hasOnly(['userId', 'name', 'email', 'dateCreated', 'dateUpdated', 'familyIds'])
         && request.resource.data.userId == userId
         && request.resource.data.name is string
-        && request.resource.data.email == request.auth.token.email;
+        && request.resource.data.email == request.auth.token.email
+        && request.resource.data.get('familyIds', []) is list;
       allow update: if signedIn() && request.auth.uid == userId
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'dateUpdated']);
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'dateUpdated', 'familyIds'])
+        && request.resource.data.get('familyIds', []) is list;
       allow delete: if false;
       match /days/{dayId} { allow read, write: if false; }
     }
@@ -94,19 +111,16 @@ service cloud.firestore {
       // Each document is a patient record with its own access subcollection.
       match /children/{patientId} {
         allow read: if permitted(familyId, patientId);
-        allow create: if primary(familyId)
-          && request.resource.data.keys().hasOnly(['patientId', 'familyId', 'name', 'dateCreated', 'dateUpdated'])
-          && request.resource.data.patientId == patientId
-          && request.resource.data.familyId == familyId
-          && request.resource.data.name is string;
+        allow create: if primary(familyId) && validPatient(familyId, patientId)
+          && getAfter(access(familyId, patientId, request.auth.uid)).data.canAccess == true;
         allow update: if primary(familyId)
-          && request.resource.data.patientId == resource.data.patientId
-          && request.resource.data.familyId == resource.data.familyId;
+          && validPatient(familyId, patientId)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'dateUpdated', 'age', 'sex', 'ethnicity', 'autismLevel', 'birthdate']);
         allow delete: if false;
         match /access/{userId} {
           allow read: if primary(familyId) || (signedIn() && request.auth.uid == userId && active(familyId));
           allow create, update: if primary(familyId) && validAccess(familyId, patientId, userId)
-            && exists(patient(familyId, patientId))
+            && existsAfter(patient(familyId, patientId))
             && exists(member(familyId, userId))
             && (request.resource.data.canAccess == false
               || get(member(familyId, userId)).data.status == 'Active');
