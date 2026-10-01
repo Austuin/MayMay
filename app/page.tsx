@@ -5,6 +5,7 @@ import {
   AlertCircle,
   ArrowRight,
   BarChart3,
+  Bell,
   CalendarDays,
   Check,
   CheckCircle2,
@@ -50,6 +51,8 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { FamilySetup } from './family-setup';
+import { FamilyAccess } from './family-access';
+import { JoinFamilyForm } from './join-family-form';
 import { PatientForm } from './patient-form';
 import {
   connectFirebase,
@@ -59,6 +62,7 @@ import {
   disconnectFirebase,
   loadRuntimeConfig,
   registerFirebaseAccount,
+  refreshFirebaseConnection,
   restoreFirebase,
   selectFamilyPatient,
   updatePatient,
@@ -67,6 +71,7 @@ import {
   type PatientFields,
 } from '@/lib/maymay-firebase';
 import { meltdownEstimate, summarizeEntries } from '@/lib/maymay-insights';
+import { watchPendingRequests, type PendingRequest } from '@/lib/maymay-invitations';
 import { useCareSync } from '@/hooks/use-care-sync';
 import { hasLegacyCareCache } from '@/lib/maymay-sync-storage';
 import {
@@ -478,6 +483,7 @@ export default function HomePage() {
   const [newFamilyName, setNewFamilyName] = useState('');
   const [familyBusy, setFamilyBusy] = useState(false);
   const [familyMessage, setFamilyMessage] = useState('');
+  const [pendingRequests, setPendingRequests] = useState<PendingRequest[]>([]);
   const connectionRef = useRef<FirebaseConnection | null>(null);
   const selectedDateRef = useRef(selectedDate);
   const sleepRef = useRef<HTMLDivElement>(null);
@@ -515,6 +521,18 @@ export default function HomePage() {
   useEffect(() => {
     selectedDateRef.current = selectedDate;
   }, [selectedDate]);
+
+  useEffect(() => {
+    if (!firebaseConnection || !firebaseConnection.families.some(family => family.role === 'Primary')) {
+      queueMicrotask(() => setPendingRequests([]));
+      return;
+    }
+    let alive = true;
+    const stop = watchPendingRequests(firebaseConnection,
+      requests => { if (alive) setPendingRequests(requests); },
+      () => { if (alive) setPendingRequests([]); });
+    return () => { alive = false; stop(); };
+  }, [firebaseConnection]);
 
   useEffect(() => {
     let alive = true;
@@ -608,6 +626,16 @@ export default function HomePage() {
     connectionRef.current = connection;
     setFirebaseConnection(connection);
     setSelectedDate(localDateValue());
+  }
+
+  async function refreshFamilyContext() {
+    const connection = connectionRef.current;
+    if (!connection) return;
+    try {
+      useConnection(await refreshFirebaseConnection(connection, {
+        familyId: connection.profile.familyId, patientId: connection.childId,
+      }));
+    } catch { /* The current access state will be checked again on the next refresh. */ }
   }
 
   async function handleCreateFamily(name: string) {
@@ -901,6 +929,8 @@ export default function HomePage() {
       onCreateFamily={handleCreateFamily}
       onCreatePatient={handleCreatePatient}
       onSelectFamily={familyId => handleSelectFamilyPatient(familyId)}
+      onChanged={useConnection}
+      onMembershipsChanged={() => { void refreshFamilyContext(); }}
       onSignOut={() => { void handleSignOut(); }}
     />;
   }
@@ -917,6 +947,18 @@ export default function HomePage() {
             </div>
           </div>
           <div className="header-actions">
+            {firebaseConnection?.families.some(family => family.role === 'Primary') && <details className="relative">
+              <summary className="flex cursor-pointer items-center gap-1 rounded-md border px-2 py-2 text-sm" aria-label={`Approval notifications: ${pendingRequests.length}`}>
+                <Bell className="size-4" />{pendingRequests.length > 0 && <b>{pendingRequests.length}</b>}
+              </summary>
+              <div className="absolute right-0 z-20 mt-2 w-64 space-y-2 rounded-xl border bg-card p-3 shadow-lg">
+                <b className="text-sm">Requests waiting</b>
+                {pendingRequests.length ? pendingRequests.map(request => <button key={request.familyId + request.userId} className="block w-full rounded-md p-2 text-left text-sm hover:bg-muted" onClick={() => {
+                  handleSelectFamilyPatient(request.familyId);
+                  setActiveTab('settings');
+                }}>{request.requesterName} · {request.familyName}</button>) : <p className="text-sm text-muted-foreground">No requests right now.</p>}
+              </div>
+            </details>}
             {firebaseConnection && <label className="text-xs font-medium">Family
               <select className="ml-2 h-9 rounded-md border bg-background px-2 text-sm" value={firebaseConnection.profile.familyId} onChange={event => handleSelectFamilyPatient(event.target.value)}>
                 {firebaseConnection.families.map(family => <option key={family.familyId} value={family.familyId}>{family.name}</option>)}
@@ -1196,6 +1238,8 @@ export default function HomePage() {
                 {familyMessage && <output role="status">{familyMessage}</output>}
               </CardContent>
             </Card>
+            {firebaseConnection && <JoinFamilyForm connection={firebaseConnection} onChanged={useConnection} />}
+            {isMaster && firebaseConnection && <FamilyAccess connection={firebaseConnection} onChanged={() => { void refreshFamilyContext(); }} />}
             {isMaster && selectedFamily && <Card>
               <CardHeader><CardTitle className="text-xl font-bold">Patient details</CardTitle></CardHeader>
               <CardContent className="space-y-6">

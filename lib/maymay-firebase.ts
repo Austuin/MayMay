@@ -14,7 +14,8 @@ import type { FamilyRole, PatientRecord } from './maymay-access';
 export type UserRole = 'pending' | 'master' | 'caregiver' | 'viewer';
 export type UserProfile = { familyId: string; role: UserRole; active: boolean; displayName?: string; email?: string };
 export type MayMayRuntimeConfig = { firebase: FirebaseWebConfig; familyId?: string; childId?: string };
-export type FamilyOption = { familyId: string; name: string; role: FamilyRole; patients: PatientRecord[] };
+export type FamilyOption = { familyId: string; name: string; role: FamilyRole; primaryId: string; patients: PatientRecord[] };
+export type FamilyRequest = { familyId: string; status: 'Pending' | 'Rejected' | 'Disabled' };
 export type PatientFields = {
   name: string;
   age?: number;
@@ -30,6 +31,7 @@ export type FirebaseConnection = {
   profile: UserProfile;
   childId: string;
   families: FamilyOption[];
+  requests: FamilyRequest[];
   patient?: PatientRecord;
 };
 
@@ -76,13 +78,19 @@ function selectionKey(app: FirebaseApp, user: User) {
   return `maymay.selection.${app.options.projectId}.${user.uid}`;
 }
 
-async function familyOptions(db: Firestore, userId: string, familyIds: string[]): Promise<FamilyOption[]> {
-  const result: FamilyOption[] = [];
+async function familyOptions(db: Firestore, userId: string, familyIds: string[]) {
+  const families: FamilyOption[] = [];
+  const requests: FamilyRequest[] = [];
   for (const familyId of new Set(familyIds)) {
     if (typeof familyId !== 'string' || !familyId) continue;
     try {
       const membership = await getDoc(doc(db, 'families', familyId, 'memberships', userId));
-      if (!membership.exists() || membership.data().status !== 'Active') continue;
+      if (!membership.exists()) continue;
+      if (membership.data().status !== 'Active') {
+        const status = membership.data().status;
+        if (['Pending', 'Rejected', 'Disabled'].includes(status)) requests.push({ familyId, status: status as FamilyRequest['status'] });
+        continue;
+      }
       const role = membership.data().role as FamilyRole;
       if (!['Primary', 'Caregiver', 'Viewer'].includes(role)) continue;
       const family = await getDoc(doc(db, 'families', familyId));
@@ -101,16 +109,16 @@ async function familyOptions(db: Firestore, userId: string, familyIds: string[])
           }
         }
       }
-      result.push({ familyId, name: String(family.data().name || 'Family'), role, patients });
+      families.push({ familyId, name: String(family.data().name || 'Family'), role, primaryId: String(family.data().primaryId || ''), patients });
     } catch (error) {
       if ((error as { code?: string }).code !== 'permission-denied') throw error;
       // A stale family hint cannot grant family access.
     }
   }
-  return result;
+  return { families, requests };
 }
 
-function chooseConnection(base: Pick<FirebaseConnection, 'app' | 'db' | 'user' | 'families'>, preferred?: { familyId?: string; patientId?: string }): FirebaseConnection {
+function chooseConnection(base: Pick<FirebaseConnection, 'app' | 'db' | 'user' | 'families' | 'requests'>, preferred?: { familyId?: string; patientId?: string }): FirebaseConnection {
   let stored: { familyId?: string; patientId?: string } = {};
   try { if (typeof localStorage !== 'undefined') stored = JSON.parse(localStorage.getItem(selectionKey(base.app, base.user)) || '{}'); } catch { /* Ignore invalid device selection. */ }
   const choice = preferred ?? stored;
@@ -132,8 +140,8 @@ function chooseConnection(base: Pick<FirebaseConnection, 'app' | 'db' | 'user' |
 
 async function connectionFrom(db: Firestore, app: FirebaseApp, user: User, preferred?: { familyId?: string; patientId?: string }) {
   const identity = await ensureIdentity(db, user);
-  const families = await familyOptions(db, user.uid, Array.isArray(identity.familyIds) ? identity.familyIds : []);
-  return chooseConnection({ app, db, user, families }, preferred);
+  const options = await familyOptions(db, user.uid, Array.isArray(identity.familyIds) ? identity.familyIds : []);
+  return chooseConnection({ app, db, user, ...options }, preferred);
 }
 
 async function connectionFor(app: FirebaseApp, user: User, preferred?: { familyId?: string; patientId?: string }) {
@@ -167,6 +175,8 @@ export async function createFamily(connection: FirebaseConnection, name: string)
   batch.set(membershipRef, {
     familyId: familyRef.id, userId: connection.user.uid, role: 'Primary', status: 'Active',
     patientIds: [], requestedAt: serverTimestamp(), dateJoined: serverTimestamp(),
+    requesterName: connection.user.displayName?.trim() || connection.user.email || 'Primary caregiver',
+    requesterEmail: connection.user.email ?? '',
   });
   batch.update(doc(connection.db, 'users', connection.user.uid), {
     familyIds: arrayUnion(familyRef.id), dateUpdated: serverTimestamp(),

@@ -39,6 +39,7 @@ vi.mock('@/lib/maymay-firebase', () => ({
   createFamily: mocks.createFamily,
   createPatient: mocks.createPatient,
   updatePatient: mocks.updatePatient,
+  refreshFirebaseConnection: vi.fn(async (connection: unknown) => connection),
   selectFamilyPatient: vi.fn(),
   connectFirebase: vi.fn(),
   connectFirebaseWithGoogle: vi.fn(),
@@ -52,6 +53,13 @@ vi.mock('@/hooks/use-care-sync', () => ({
     getEntries: () => [], replaceEntry: vi.fn(), retry: vi.fn(),
     acceptSaved: vi.fn(), saveDraft: vi.fn(), stop: vi.fn(),
   }),
+}));
+
+vi.mock('@/lib/maymay-invitations', () => ({
+  getFamilyCode: vi.fn(async () => null),
+  listFamilyMembers: vi.fn(async () => []),
+  listPendingRequests: vi.fn(async () => []),
+  watchPendingRequests: vi.fn((_connection, receive) => { receive([]); return () => undefined; }),
 }));
 
 beforeEach(() => {
