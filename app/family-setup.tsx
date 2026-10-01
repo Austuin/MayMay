@@ -3,15 +3,19 @@
 import { useState, type FormEvent } from 'react';
 import { HeartHandshake, LogOut } from 'lucide-react';
 import { PatientForm } from './patient-form';
+import { JoinFamilyForm } from './join-family-form';
+import { FamilyAccess } from './family-access';
 import type { FirebaseConnection, PatientFields } from '@/lib/maymay-firebase';
 
 export function FamilySetup({
-  connection, onCreateFamily, onCreatePatient, onSelectFamily, onSignOut,
+  connection, onCreateFamily, onCreatePatient, onSelectFamily, onChanged, onMembershipsChanged, onSignOut,
 }: {
   connection: FirebaseConnection;
   onCreateFamily: (name: string) => Promise<void>;
   onCreatePatient: (familyId: string, fields: PatientFields) => Promise<void>;
   onSelectFamily: (familyId: string) => void;
+  onChanged: (connection: FirebaseConnection) => void;
+  onMembershipsChanged: () => void;
   onSignOut: () => void;
 }) {
   const [name, setName] = useState('');
@@ -66,6 +70,8 @@ export function FamilySetup({
             </>
           )}
         </section>
+        <JoinFamilyForm connection={connection} onChanged={onChanged} />
+        {family?.role === 'Primary' && <FamilyAccess connection={connection} onChanged={onMembershipsChanged} />}
       </div>
     </main>
   );

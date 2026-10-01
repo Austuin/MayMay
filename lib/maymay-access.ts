@@ -21,6 +21,12 @@ export type FamilyMembership = {
   dateJoined?: unknown;
   approvedAt?: unknown;
   approvedBy?: string;
+  reviewedAt?: unknown;
+  reviewedBy?: string;
+  requesterName?: string;
+  requesterEmail?: string;
+  joinSecret?: string;
+  patientIds?: string[];
 };
 
 export type PatientRecord = {

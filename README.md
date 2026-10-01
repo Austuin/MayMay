@@ -60,7 +60,11 @@ For an older installed copy that predates the host update command, email `MayMay
 
 A new account can be created with email/password or Google sign-in. The account then creates a family and becomes its first Primary caregiver. The Primary adds a patient; only the name is required. Birthdate, age, sex, ethnicity, and autism support level can be supplied during creation or edited later. An account can create multiple families and patients and switch between them. Care events remain scoped to the selected family and patient.
 
-Family Code requests, joining an existing family, and Primary approval are reserved for Stage C. The host terminal's older role commands and provisioning script still belong to the production v1 flow and must be updated before a release.
+## Stage C family access
+
+A Primary caregiver can generate a Family Code and rotate it to stop new requests using the previous code. A signed-in caregiver enters the code to request access. The request remains Pending until a Primary reviews it in the Family access area; it grants no care-record access while pending. Primary caregivers see a request count in the app and choose the caregiver's role and patient access when approving. They can later change roles or patient access, disable and restore access, and transfer the designated Primary role. Applicants can check their approval status from the Join a family area. A rejected applicant may request again with the current code.
+
+The host terminal's older role commands and provisioning script still belong to the production v1 flow and must be updated before a release. This stage does not deploy the new rules or app to the live host.
 
 ## Firebase requirements
 
@@ -82,6 +86,7 @@ Every occurrence is stored as its own event document:
 ```text
 families/{familyId}
   memberships/{firebaseAuthenticationUid}
+  joinSettings/current
   children/{patientId}
     access/{firebaseAuthenticationUid}
     events/{eventId}

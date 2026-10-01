@@ -4,6 +4,7 @@ service cloud.firestore {
     function signedIn() { return request.auth != null; }
     function family(f) { return /databases/$(database)/documents/families/$(f); }
     function member(f, u) { return /databases/$(database)/documents/families/$(f)/memberships/$(u); }
+    function joinSettings(f) { return /databases/$(database)/documents/families/$(f)/joinSettings/current; }
     function patient(f, p) { return /databases/$(database)/documents/families/$(f)/children/$(p); }
     function access(f, p, u) { return /databases/$(database)/documents/families/$(f)/children/$(p)/access/$(u); }
     function active(f) {
@@ -27,11 +28,23 @@ service cloud.firestore {
         && getAfter(member(f, u)).data.role == 'Primary';
     }
     function validMembership(f, u) {
-      return request.resource.data.keys().hasOnly(['familyId', 'userId', 'role', 'status', 'requestedAt', 'dateJoined', 'approvedAt', 'approvedBy', 'patientIds'])
+      return request.resource.data.keys().hasOnly(['familyId', 'userId', 'role', 'status', 'requestedAt', 'dateJoined', 'approvedAt', 'approvedBy', 'reviewedAt', 'reviewedBy', 'patientIds', 'requesterName', 'requesterEmail', 'joinSecret'])
         && request.resource.data.familyId == f && request.resource.data.userId == u
         && request.resource.data.role in ['Primary', 'Caregiver', 'Viewer']
         && request.resource.data.status in ['Pending', 'Active', 'Rejected', 'Disabled']
         && request.resource.data.get('patientIds', []) is list;
+    }
+    function validJoinRequest(f, u) {
+      return signedIn() && request.auth.uid == u
+        && exists(family(f))
+        && request.resource.data.keys().hasOnly(['familyId', 'userId', 'role', 'status', 'requestedAt', 'patientIds', 'requesterName', 'requesterEmail', 'joinSecret'])
+        && request.resource.data.role == 'Caregiver'
+        && request.resource.data.status == 'Pending'
+        && request.resource.data.patientIds == []
+        && request.resource.data.requesterName is string
+        && request.resource.data.requesterEmail == request.auth.token.email
+        && request.resource.data.requestedAt == request.time
+        && request.resource.data.joinSecret == get(joinSettings(f)).data.secret;
     }
     function validPatient(f, p) {
       return request.resource.data.keys().hasOnly(['patientId', 'familyId', 'name', 'dateCreated', 'dateUpdated', 'age', 'sex', 'ethnicity', 'autismLevel', 'birthdate'])
@@ -85,6 +98,17 @@ service cloud.firestore {
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'primaryId'])
         && activePrimaryAfter(familyId, request.resource.data.primaryId);
       allow delete: if false;
+      match /joinSettings/{settingsId} {
+        allow get: if settingsId == 'current' && primary(familyId);
+        allow list: if false;
+        allow create, update: if settingsId == 'current' && primary(familyId)
+          && request.resource.data.keys().hasOnly(['familyId', 'secret', 'updatedAt'])
+          && request.resource.data.familyId == familyId
+          && request.resource.data.secret is string
+          && request.resource.data.secret.matches('^[0-9a-f]{32}$')
+          && request.resource.data.updatedAt == request.time;
+        allow delete: if false;
+      }
       match /memberships/{userId} {
         allow read: if signedIn() && (request.auth.uid == userId || primary(familyId));
         allow create: if validMembership(familyId, userId)
@@ -94,18 +118,20 @@ service cloud.firestore {
               && getAfter(family(familyId)).data.primaryId == userId
               && request.resource.data.role == 'Primary'
               && request.resource.data.status == 'Active')
-            || (primary(familyId) && userId != request.auth.uid
-              && request.resource.data.role in ['Caregiver', 'Viewer']));
-        allow update: if primary(familyId) && validMembership(familyId, userId)
+            || validJoinRequest(familyId, userId));
+        allow update: if validMembership(familyId, userId)
+          && ((primary(familyId)
           && request.resource.data.familyId == resource.data.familyId
           && request.resource.data.userId == resource.data.userId
           && (request.resource.data.role != 'Primary' || request.resource.data.status == 'Active')
           && (request.resource.data.role != 'Primary'
             || resource.data.role == 'Primary' || resource.data.status == 'Active')
           && (getAfter(family(familyId)).data.primaryId != userId
-            || (request.resource.data.role == 'Primary' && request.resource.data.status == 'Active'));
-        allow delete: if primary(familyId)
-          && getAfter(family(familyId)).data.primaryId != userId;
+            || (request.resource.data.role == 'Primary' && request.resource.data.status == 'Active')))
+          || (resource.data.status == 'Rejected' && validJoinRequest(familyId, userId)));
+        allow delete: if (primary(familyId)
+          && getAfter(family(familyId)).data.primaryId != userId)
+          || (signedIn() && request.auth.uid == userId && resource.data.status == 'Pending');
       }
       // "children" remains the care-record collection name until the rollout.
       // Each document is a patient record with its own access subcollection.
@@ -123,7 +149,7 @@ service cloud.firestore {
             && existsAfter(patient(familyId, patientId))
             && exists(member(familyId, userId))
             && (request.resource.data.canAccess == false
-              || get(member(familyId, userId)).data.status == 'Active');
+              || getAfter(member(familyId, userId)).data.status == 'Active');
           allow delete: if primary(familyId);
         }
         match /medications/{medicationId} {
