@@ -2,7 +2,7 @@
 
 MayMay is a private caregiver-facing tracker for morning, afternoon, and evening mood, routines, meals, sleep, medications, bathroom notes, triggers, and meltdown events.
 
-> **Development status:** Stage B adds account, family, and patient setup on `DevBranch`. The host provisioning script and live database cutover are still pending. Do not run this branch's host against the live Firebase project: host startup publishes `firebase.rules`. Production remains on `main` until the staged rollout is approved.
+> **Development status:** Stages B and C are on `DevBranch`. The tracker redesign is available only as a mock-data UI preview. The host provisioning script and live database cutover are still pending. Do not run this branch's host against the live Firebase project: host startup publishes `firebase.rules`. Production remains on `main` until the staged rollout is approved.
 
 The application has two surfaces:
 
@@ -65,6 +65,10 @@ A new account can be created with email/password or Google sign-in. The account 
 A Primary caregiver can generate a Family Code and rotate it to stop new requests using the previous code. A signed-in caregiver enters the code to request access. The request remains Pending until a Primary reviews it in the Family access area; it grants no care-record access while pending. Primary caregivers see a request count in the app and choose the caregiver's role and patient access when approving. They can later change roles or patient access, disable and restore access, and transfer the designated Primary role. Applicants can check their approval status from the Join a family area. A rejected applicant may request again with the current code.
 
 The host terminal's older role commands and provisioning script still belong to the production v1 flow and must be updated before a release. This stage does not deploy the new rules or app to the live host.
+
+## Tracker UI preview
+
+Open **Settings → New tracker preview**, or visit `/tracker-preview/` while running the development server. This isolated prototype starts with Morning Mood, Bowel Movements, and Went to School on Time as editable, removable examples. The tracker menu contains creation and deletion; unexpected events can be added and removed directly, with Undo. It uses in-memory sample data only: no Firebase connection, care-record write, or browser-storage persistence. Refreshing the page resets the preview. The existing daily tracker remains the real care-record interface until its data model is redesigned and tested.
 
 ## Firebase requirements
 

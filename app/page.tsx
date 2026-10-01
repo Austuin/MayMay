@@ -1210,6 +1210,13 @@ export default function HomePage() {
 
           <div className="settings-grid mt-5">
             <Card>
+              <CardHeader><CardTitle className="text-xl font-bold">New tracker preview</CardTitle></CardHeader>
+              <CardContent className="space-y-3">
+                <p className="text-sm text-muted-foreground">Try the proposed check-in with three editable examples and unexpected events. It uses sample data and resets when you refresh.</p>
+                <a href="/tracker-preview/" className="inline-flex min-h-11 items-center rounded-xl border px-4 text-sm font-semibold text-primary hover:bg-muted">Open tracker preview</a>
+              </CardContent>
+            </Card>
+            <Card>
               <CardHeader><CardTitle className="text-xl font-bold">Your account</CardTitle></CardHeader>
               <CardContent>
                 <div className="current-access-card">
