@@ -26,6 +26,8 @@ const firebaseMocks = vi.hoisted(() => {
       displayName: 'Test Caregiver',
       email: 'caregiver@example.test',
     },
+    families: [{ familyId: 'maymay', name: 'Test Family', role: 'Caregiver', patients: [{ patientId: 'maymay', familyId: 'maymay', name: 'Test Patient' }] }],
+    patient: { patientId: 'maymay', familyId: 'maymay', name: 'Test Patient' },
   };
 
   return {

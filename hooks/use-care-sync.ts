@@ -11,7 +11,7 @@ export function useCareSync(connection: FirebaseConnection | null) {
   const session = useRef<CareSyncSession | null>(null);
   useEffect(() => {
     entriesRef.current = [];
-    if (!connection || connection.profile.role === 'pending') return;
+    if (!connection || !connection.childId || connection.profile.role === 'pending') return;
     const current = new CareSyncSession(connection, next => {
       entriesRef.current = next.entries;
       setSnapshot({ owner: connection, state: next });

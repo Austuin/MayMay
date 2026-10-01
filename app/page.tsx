@@ -11,7 +11,6 @@ import {
   ChevronDown,
   Cloud,
   CloudOff,
-  Crown,
   HeartHandshake,
   History,
   Home,
@@ -27,8 +26,6 @@ import {
   Trash2,
   TrendingUp,
   Utensils,
-  UserCheck,
-  UsersRound,
   Zap,
 } from 'lucide-react';
 import { CartesianGrid, Line, LineChart, XAxis, YAxis } from 'recharts';
@@ -52,18 +49,22 @@ import {
 } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
+import { FamilySetup } from './family-setup';
+import { PatientForm } from './patient-form';
 import {
-  assignFamilyRole,
   connectFirebase,
   connectFirebaseWithGoogle,
+  createFamily,
+  createPatient,
   disconnectFirebase,
-  listFamilyUsers,
   loadRuntimeConfig,
   registerFirebaseAccount,
   restoreFirebase,
+  selectFamilyPatient,
+  updatePatient,
   type FirebaseConnection,
-  type ManagedUserProfile,
   type MayMayRuntimeConfig,
+  type PatientFields,
 } from '@/lib/maymay-firebase';
 import { meltdownEstimate, summarizeEntries } from '@/lib/maymay-insights';
 import { useCareSync } from '@/hooks/use-care-sync';
@@ -379,85 +380,6 @@ function PossibleTriggerCard({
   );
 }
 
-function PersonRow({
-  person,
-  currentUserId,
-  busy,
-  onAssign,
-}: {
-  person: ManagedUserProfile;
-  currentUserId: string;
-  busy: boolean;
-  onAssign: (userId: string, role: 'caregiver' | 'master') => void;
-}) {
-  const isCurrentUser = person.uid === currentUserId;
-  const name = person.displayName || person.email?.split('@')[0] || 'New person';
-  const roleLabel = person.role === 'pending'
-    ? 'Waiting for approval'
-    : person.role === 'master'
-      ? 'Master'
-      : person.role === 'caregiver'
-        ? 'Caregiver'
-        : 'Viewer';
-
-  return (
-    <article className="person-row">
-      <span className="person-avatar" aria-hidden="true">{name.slice(0, 1).toUpperCase()}</span>
-      <div className="person-details">
-        <div className="person-name-line"><b>{name}</b>{isCurrentUser && <span>You</span>}</div>
-        <p>{person.email || person.uid}</p>
-        <small data-role={person.role}>{roleLabel}</small>
-      </div>
-      {isCurrentUser ? (
-        <div className="person-current"><ShieldCheck /> Your access</div>
-      ) : (
-        <div className="person-actions" aria-label={`Choose access for ${name}`}>
-          <Button
-            variant={person.role === 'caregiver' && person.active ? 'default' : 'outline'}
-            type="button"
-            disabled={busy || (person.role === 'caregiver' && person.active)}
-            onClick={() => onAssign(person.uid, 'caregiver')}
-          >
-            {busy ? <LoaderCircle className="animate-spin" /> : <UserCheck />}
-            {person.role === 'caregiver' && person.active ? 'Caregiver' : 'Make caregiver'}
-          </Button>
-          <Button
-            variant={person.role === 'master' && person.active ? 'default' : 'outline'}
-            type="button"
-            disabled={busy || (person.role === 'master' && person.active)}
-            onClick={() => onAssign(person.uid, 'master')}
-          >
-            {busy ? <LoaderCircle className="animate-spin" /> : <Crown />}
-            {person.role === 'master' && person.active ? 'Master' : 'Make master'}
-          </Button>
-        </div>
-      )}
-    </article>
-  );
-}
-
-function PendingAccessScreen({ email, onSignOut }: { email: string; onSignOut: () => void }) {
-  return (
-    <main className="access-shell">
-      <section className="access-card" aria-labelledby="pending-access-title">
-        <div className="access-brand">
-          <span><HeartHandshake aria-hidden="true" /></span>
-          <div><b>MayMay</b><small>Daily care notes</small></div>
-        </div>
-        <div className="pending-access-message">
-          <ShieldCheck aria-hidden="true" />
-          <p className="eyebrow">Account created</p>
-          <h1 id="pending-access-title">Waiting for a role</h1>
-          <p><b>{email || 'This account'}</b> is registered, but no care records are visible yet.</p>
-          <p>A MayMay master can open <b>Settings</b> and choose <b>Make caregiver</b> or <b>Make master</b>.</p>
-          <Button className="mt-5 h-11 w-full" type="button" onClick={() => window.location.reload()}><RefreshCw /> Check access again</Button>
-          <Button variant="ghost" className="mt-2 h-11 w-full" type="button" onClick={onSignOut}><LogOut /> Sign out</Button>
-        </div>
-      </section>
-    </main>
-  );
-}
-
 function AccessScreen({
   mode,
   email,
@@ -467,7 +389,6 @@ function AccessScreen({
   busy,
   hostUnavailable,
   error,
-  registrationComplete,
   onModeChange,
   onEmailChange,
   onPasswordChange,
@@ -484,7 +405,6 @@ function AccessScreen({
   busy: boolean;
   hostUnavailable: boolean;
   error: string;
-  registrationComplete: string;
   onModeChange: (mode: 'sign-in' | 'register') => void;
   onEmailChange: (value: string) => void;
   onPasswordChange: (value: string) => void;
@@ -511,22 +431,11 @@ function AccessScreen({
               <button type="button" data-active={mode === 'sign-in'} onClick={() => onModeChange('sign-in')}>Sign in</button>
               <button type="button" data-active={mode === 'register'} onClick={() => onModeChange('register')}>Create account</button>
             </div>
-            {registrationComplete ? (
-              <div className="registration-complete">
-                <CheckCircle2 aria-hidden="true" />
-                <div>
-                  <h1 id="access-title">Waiting for approval</h1>
-                  <p>The account for <b>{registrationComplete}</b> is ready. Sign in after a MayMay master approves it.</p>
-                  <p>A MayMay master can assign Caregiver or Master access from <b>Settings</b>.</p>
-                  <Button className="mt-5 h-11" type="button" onClick={() => onModeChange('sign-in')}>Return to sign in <ArrowRight /></Button>
-                </div>
-              </div>
-            ) : (
               <>
                 <div className="access-heading">
-                  <p className="eyebrow">Trusted caregivers</p>
-                  <h1 id="access-title">{mode === 'register' ? 'Create a caregiver account' : 'Sign in to continue'}</h1>
-                  <p>{mode === 'register' ? 'Register here, then ask the host owner to approve your account before signing in.' : 'Use your approved MayMay caregiver account.'}</p>
+                  <p className="eyebrow">Your care space</p>
+                  <h1 id="access-title">{mode === 'register' ? 'Create your account' : 'Sign in to continue'}</h1>
+                  <p>{mode === 'register' ? 'After creating an account, you can set up a family and patient.' : 'Sign in to your MayMay account.'}</p>
                 </div>
                 <Button variant="outline" className="google-auth-button" type="button" disabled={busy} onClick={onGoogleSignIn}>
                   <span className="google-mark" aria-hidden="true">G</span>
@@ -541,9 +450,8 @@ function AccessScreen({
                   {error && <p className="access-error" role="alert"><AlertCircle />{error}</p>}
                   <Button className="h-12 w-full text-base" type="submit" disabled={busy}>{busy ? <LoaderCircle className="animate-spin" /> : <ShieldCheck />}{busy ? (mode === 'register' ? 'Creating account…' : 'Signing in…') : (mode === 'register' ? 'Create account' : 'Sign in')}</Button>
                 </form>
-                <p className="access-private"><ShieldCheck />{mode === 'register' ? 'No care records are visible until a MayMay master assigns the new account a role.' : 'Firebase keeps this trusted device signed in. MayMay never stores the password.'}</p>
+                <p className="access-private"><ShieldCheck />Firebase keeps this trusted device signed in. MayMay never stores the password.</p>
               </>
-            )}
           </>
         )}
       </section>
@@ -565,13 +473,11 @@ export default function HomePage() {
   const [caregiverPassword, setCaregiverPassword] = useState('');
   const [caregiverName, setCaregiverName] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [registrationComplete, setRegistrationComplete] = useState('');
   const [authError, setAuthError] = useState('');
   const [authBusy, setAuthBusy] = useState(false);
-  const [people, setPeople] = useState<ManagedUserProfile[]>([]);
-  const [peopleBusy, setPeopleBusy] = useState(false);
-  const [peopleActionId, setPeopleActionId] = useState('');
-  const [peopleMessage, setPeopleMessage] = useState('');
+  const [newFamilyName, setNewFamilyName] = useState('');
+  const [familyBusy, setFamilyBusy] = useState(false);
+  const [familyMessage, setFamilyMessage] = useState('');
   const connectionRef = useRef<FirebaseConnection | null>(null);
   const selectedDateRef = useRef(selectedDate);
   const sleepRef = useRef<HTMLDivElement>(null);
@@ -592,8 +498,7 @@ export default function HomePage() {
   const currentRole = firebaseConnection?.profile.role;
   const isMaster = currentRole === 'master';
   const isReadOnly = currentRole === 'viewer';
-  const pendingPeople = people.filter((person) => person.role === 'pending' || !person.active);
-  const approvedPeople = people.filter((person) => person.role !== 'pending' && person.active);
+  const selectedFamily = firebaseConnection?.families.find(item => item.familyId === firebaseConnection.profile.familyId);
   const isBackfill = selectedDate < today;
   const progressItems = [
     entry.moods.morning.score,
@@ -632,17 +537,10 @@ export default function HomePage() {
         return;
       }
       try {
-        const connection = await restoreFirebase(config.firebase, config.childId, config.familyId);
+        const connection = await restoreFirebase(config.firebase);
         if (!alive) return;
         if (!connection) {
           setSyncState('signed-out');
-          return;
-        }
-        if (connection.profile.role === 'pending') {
-          connectionRef.current = connection;
-          setFirebaseConnection(connection);
-          setCaregiverEmail(connection.user.email ?? '');
-          setSyncState('connected');
           return;
         }
         if (!alive) return;
@@ -706,42 +604,37 @@ export default function HomePage() {
     openEntry(localDateValue(previous));
   }
 
-  async function refreshPeople() {
-    const connection = connectionRef.current;
-    if (!connection || connection.profile.role !== 'master') return;
-    setPeopleBusy(true);
-    setPeopleMessage('');
-    try {
-      setPeople(await listFamilyUsers(connection));
-    } catch (error) {
-      setPeopleMessage(error instanceof Error ? error.message : 'The people list could not be loaded.');
-    } finally {
-      setPeopleBusy(false);
-    }
+  function useConnection(connection: FirebaseConnection) {
+    connectionRef.current = connection;
+    setFirebaseConnection(connection);
+    setSelectedDate(localDateValue());
   }
 
-  async function handleAssignRole(userId: string, role: 'caregiver' | 'master') {
+  async function handleCreateFamily(name: string) {
     const connection = connectionRef.current;
-    if (!connection || connection.profile.role !== 'master') return;
-    const person = people.find((item) => item.uid === userId);
-    setPeopleActionId(userId);
-    setPeopleMessage('');
-    try {
-      await assignFamilyRole(connection, userId, role);
-      setPeopleMessage(`${person?.displayName || person?.email || 'This person'} is now a ${role}.`);
-      setPeople(await listFamilyUsers(connection));
-    } catch (error) {
-      setPeopleMessage(error instanceof Error ? error.message : 'The role could not be changed.');
-    } finally {
-      setPeopleActionId('');
-    }
+    if (!connection) return;
+    const created = await createFamily(connection, name);
+    useConnection(created);
+    setFamilyMessage('');
   }
 
-  function changeTab(value: string) {
-    setActiveTab(value);
-    if (value === 'settings' && connectionRef.current?.profile.role === 'master') {
-      void refreshPeople();
-    }
+  async function handleCreatePatient(familyId: string, fields: PatientFields) {
+    const connection = connectionRef.current;
+    if (!connection) return;
+    useConnection(await createPatient(connection, familyId, fields));
+  }
+
+  async function handleUpdatePatient(fields: PatientFields) {
+    const connection = connectionRef.current;
+    if (!connection) return;
+    useConnection(await updatePatient(connection, fields));
+    setFamilyMessage('Patient details saved.');
+  }
+
+  function handleSelectFamilyPatient(familyId: string, patientId = '') {
+    const connection = connectionRef.current;
+    if (!connection) return;
+    useConnection(selectFamilyPatient(connection, familyId, patientId));
   }
 
   async function handleSignIn(event: SyntheticEvent<HTMLFormElement>) {
@@ -755,16 +648,18 @@ export default function HomePage() {
       setAuthBusy(true);
       setAuthError('');
       try {
-        const account = await registerFirebaseAccount(
+        const connection = await registerFirebaseAccount(
           runtimeConfig.firebase,
           caregiverName.trim(),
           caregiverEmail.trim(),
           caregiverPassword,
-          runtimeConfig.familyId,
         );
-        setRegistrationComplete(account.email);
+        useConnection(connection);
+        setCaregiverEmail(connection.user.email ?? caregiverEmail.trim());
         setCaregiverPassword('');
         setConfirmPassword('');
+        setAccessMode('sign-in');
+        setSyncState('connected');
       } catch (error) {
         const code = (error as { code?: string })?.code;
         const message = code === 'auth/email-already-in-use'
@@ -791,19 +686,8 @@ export default function HomePage() {
         runtimeConfig.firebase,
         caregiverEmail.trim(),
         caregiverPassword,
-        runtimeConfig.childId,
-        runtimeConfig.familyId,
       );
-      if (connection.profile.role === 'pending') {
-        connectionRef.current = connection;
-        setFirebaseConnection(connection);
-        setCaregiverEmail(connection.user.email ?? caregiverEmail.trim());
-        setCaregiverPassword('');
-        setSyncState('connected');
-        return;
-      }
-      connectionRef.current = connection;
-      setFirebaseConnection(connection);
+      useConnection(connection);
       setCaregiverEmail(connection.user.email ?? '');
       setCaregiverPassword('');
       setAccessMode('sign-in');
@@ -821,21 +705,8 @@ export default function HomePage() {
     setAuthBusy(true);
     setAuthError('');
     try {
-      const connection = await connectFirebaseWithGoogle(
-        runtimeConfig.firebase,
-        runtimeConfig.childId,
-        runtimeConfig.familyId,
-      );
-      if (connection.profile.role === 'pending') {
-        connectionRef.current = connection;
-        setFirebaseConnection(connection);
-        setCaregiverEmail(connection.user.email ?? '');
-        setAccessMode('sign-in');
-        setSyncState('connected');
-        return;
-      }
-      connectionRef.current = connection;
-      setFirebaseConnection(connection);
+      const connection = await connectFirebaseWithGoogle(runtimeConfig.firebase);
+      useConnection(connection);
       setCaregiverEmail(connection.user.email ?? '');
       setCaregiverPassword('');
       setAccessMode('sign-in');
@@ -867,7 +738,6 @@ export default function HomePage() {
     setAuthError('');
     setCaregiverPassword('');
     setConfirmPassword('');
-    setRegistrationComplete('');
   }
 
   async function handleSignOut() {
@@ -875,8 +745,7 @@ export default function HomePage() {
     careSync.stop();
     connectionRef.current = null;
     setFirebaseConnection(null);
-    setPeople([]);
-    setPeopleMessage('');
+    setFamilyMessage('');
     setActiveTab('today');
     setCaregiverPassword('');
     setSyncState('signed-out');
@@ -950,7 +819,7 @@ export default function HomePage() {
           annotations: { readOnlyHint: false, untrustedContentHint: false },
           execute(input) {
             if (!['master', 'caregiver'].includes(connectionRef.current?.profile.role ?? '')) {
-              throw new Error('A Caregiver or Master role is required to save a check-in.');
+              throw new Error('A Caregiver or Primary role is required to save a check-in.');
             }
             const value = input as {
               date?: string;
@@ -996,7 +865,7 @@ export default function HomePage() {
   }, [getEntries, replaceEntry]);
 
   if (!hydrated || syncState === 'starting' || syncState === 'connecting'
-    || (syncState === 'connected' && currentRole !== 'pending' && careSync.status === 'loading')) {
+    || (syncState === 'connected' && Boolean(firebaseConnection?.childId) && careSync.status === 'loading')) {
     return (
       <main className="access-shell">
         <output className="access-loading"><LoaderCircle className="animate-spin" /><span>Starting MayMay…</span></output>
@@ -1015,7 +884,6 @@ export default function HomePage() {
         busy={authBusy}
         hostUnavailable={syncState === 'host-error'}
         error={authError}
-        registrationComplete={registrationComplete}
         onModeChange={changeAccessMode}
         onEmailChange={setCaregiverEmail}
         onPasswordChange={setCaregiverPassword}
@@ -1027,8 +895,14 @@ export default function HomePage() {
     );
   }
 
-  if (currentRole === 'pending') {
-    return <PendingAccessScreen email={caregiverEmail} onSignOut={() => { void handleSignOut(); }} />;
+  if (firebaseConnection && !firebaseConnection.childId) {
+    return <FamilySetup
+      connection={firebaseConnection}
+      onCreateFamily={handleCreateFamily}
+      onCreatePatient={handleCreatePatient}
+      onSelectFamily={familyId => handleSelectFamilyPatient(familyId)}
+      onSignOut={() => { void handleSignOut(); }}
+    />;
   }
 
   return (
@@ -1043,6 +917,16 @@ export default function HomePage() {
             </div>
           </div>
           <div className="header-actions">
+            {firebaseConnection && <label className="text-xs font-medium">Family
+              <select className="ml-2 h-9 rounded-md border bg-background px-2 text-sm" value={firebaseConnection.profile.familyId} onChange={event => handleSelectFamilyPatient(event.target.value)}>
+                {firebaseConnection.families.map(family => <option key={family.familyId} value={family.familyId}>{family.name}</option>)}
+              </select>
+            </label>}
+            {selectedFamily && <label className="text-xs font-medium">Patient
+              <select className="ml-2 h-9 rounded-md border bg-background px-2 text-sm" value={firebaseConnection?.childId ?? ''} onChange={event => handleSelectFamilyPatient(selectedFamily.familyId, event.target.value)}>
+                {selectedFamily.patients.map(patient => <option key={patient.patientId} value={patient.patientId}>{patient.name}</option>)}
+              </select>
+            </label>}
             <div className="sync-pill" aria-live="polite" aria-label={`Data storage status: ${careSync.status === 'saved' ? 'Firestore synced' : 'sync pending'}`}>
               {careSync.status === 'saved' ? <Cloud /> : <CloudOff />}
               <span>{careSync.status === 'saved' ? 'Firestore synced' : 'Sync pending'}</span>
@@ -1071,7 +955,7 @@ export default function HomePage() {
         {legacyCache && <details className="text-sm text-muted-foreground"><summary>Previous device cache preserved</summary><p>Older local records have been kept on this device. They are not uploaded automatically because their account and saved versions cannot be verified. Shared records load from Firestore; any unsynced older notes need separate recovery.</p></details>}
       </div>
 
-      <Tabs value={activeTab} onValueChange={changeTab} className="mx-auto w-full max-w-[1160px] px-4 pb-28 pt-5 sm:px-6 sm:pb-10 lg:px-8">
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="mx-auto w-full max-w-[1160px] px-4 pb-28 pt-5 sm:px-6 sm:pb-10 lg:px-8">
         <TabsList className="top-nav" aria-label="MayMay sections">
           <TabsTrigger value="today" className="top-nav-item"><Home data-icon="inline-start" /> Today</TabsTrigger>
           <TabsTrigger value="insights" className="top-nav-item"><BarChart3 data-icon="inline-start" /> Insights</TabsTrigger>
@@ -1279,7 +1163,7 @@ export default function HomePage() {
 
         <TabsContent value="settings" className="mt-5">
           <div className="page-intro">
-            <div><p className="eyebrow">Private access</p><h1>Settings</h1><p>See your access and manage trusted people.</p></div>
+            <div><p className="eyebrow">Your care space</p><h1>Settings</h1><p>Manage your families and patient details.</p></div>
           </div>
 
           <div className="settings-grid mt-5">
@@ -1289,38 +1173,38 @@ export default function HomePage() {
                 <div className="current-access-card">
                   <span><ShieldCheck /></span>
                   <div><b>{firebaseConnection?.user.displayName || caregiverEmail || 'MayMay account'}</b><p>{caregiverEmail}</p></div>
-                  <strong>{currentRole === 'master' ? 'Master' : currentRole === 'caregiver' ? 'Caregiver' : 'Viewer'}</strong>
+                  <strong>{currentRole === 'master' ? 'Primary' : currentRole === 'caregiver' ? 'Caregiver' : 'Viewer'}</strong>
                 </div>
               </CardContent>
             </Card>
 
-            {isMaster && (
-              <Card className="people-card">
-                <CardHeader className="flex-row items-center justify-between gap-4">
-                  <div><CardTitle className="flex items-center gap-2 text-xl font-bold"><UsersRound /> People &amp; roles</CardTitle><p className="mt-2 text-base text-muted-foreground">Only masters can see these controls.</p></div>
-                  <Button variant="outline" type="button" disabled={peopleBusy} onClick={() => { void refreshPeople(); }}><RefreshCw className={peopleBusy ? 'animate-spin' : ''} /> Refresh</Button>
-                </CardHeader>
-                <CardContent className="space-y-6">
-                  {peopleMessage && <output className="people-message">{peopleMessage}</output>}
-
-                  <section aria-labelledby="pending-people-title">
-                    <div className="people-section-heading"><div><h2 id="pending-people-title">Waiting for a role</h2><p>These accounts cannot see any care records yet.</p></div><span>{pendingPeople.length}</span></div>
-                    {peopleBusy && people.length === 0 ? (
-                      <div className="quiet-empty"><LoaderCircle className="animate-spin" /><div><b>Loading people…</b></div></div>
-                    ) : pendingPeople.length ? (
-                      <div className="people-list">{pendingPeople.map((person) => <PersonRow key={person.uid} person={person} currentUserId={firebaseConnection?.user.uid ?? ''} busy={peopleActionId === person.uid} onAssign={handleAssignRole} />)}</div>
-                    ) : (
-                      <div className="quiet-empty"><CheckCircle2 /><div><b>No one is waiting</b><p>Newly registered accounts will appear here.</p></div></div>
-                    )}
-                  </section>
-
-                  <section aria-labelledby="approved-people-title">
-                    <div className="people-section-heading"><div><h2 id="approved-people-title">Approved people</h2><p>Caregivers can track. Masters can also manage roles.</p></div><span>{approvedPeople.length}</span></div>
-                    <div className="people-list">{approvedPeople.map((person) => <PersonRow key={person.uid} person={person} currentUserId={firebaseConnection?.user.uid ?? ''} busy={peopleActionId === person.uid} onAssign={handleAssignRole} />)}</div>
-                  </section>
-                </CardContent>
-              </Card>
-            )}
+            <Card>
+              <CardHeader><CardTitle className="text-xl font-bold">Families</CardTitle></CardHeader>
+              <CardContent className="space-y-4">
+                <p className="text-sm text-muted-foreground">You are viewing {selectedFamily?.name}. Use the family and patient selectors above to switch.</p>
+                <form className="flex flex-wrap items-end gap-3" onSubmit={async event => {
+                  event.preventDefault();
+                  setFamilyBusy(true);
+                  setFamilyMessage('');
+                  try { await handleCreateFamily(newFamilyName); setNewFamilyName(''); }
+                  catch (error) { setFamilyMessage(error instanceof Error ? error.message : 'Could not create the family.'); }
+                  finally { setFamilyBusy(false); }
+                }}>
+                  <Field label="New family name"><Input value={newFamilyName} onChange={event => setNewFamilyName(event.target.value)} required maxLength={100} /></Field>
+                  <Button type="submit" disabled={familyBusy}>{familyBusy ? 'Creating…' : 'Create family'}</Button>
+                </form>
+                {familyMessage && <output role="status">{familyMessage}</output>}
+              </CardContent>
+            </Card>
+            {isMaster && selectedFamily && <Card>
+              <CardHeader><CardTitle className="text-xl font-bold">Patient details</CardTitle></CardHeader>
+              <CardContent className="space-y-6">
+                {firebaseConnection?.patient && <PatientForm key={firebaseConnection.patient.patientId} action="Save patient details" initial={firebaseConnection.patient} onSave={handleUpdatePatient} />}
+                <details className="border-t pt-4"><summary className="cursor-pointer font-medium">Add another patient</summary>
+                  <div className="mt-4"><PatientForm key={selectedFamily.familyId + '-new'} action="Add patient" resetOnSave onSave={fields => handleCreatePatient(selectedFamily.familyId, fields)} /></div>
+                </details>
+              </CardContent>
+            </Card>}
           </div>
         </TabsContent>
       </Tabs>

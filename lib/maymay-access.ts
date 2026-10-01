@@ -29,6 +29,11 @@ export type PatientRecord = {
   name: string;
   dateCreated: unknown;
   dateUpdated: unknown;
+  age?: number;
+  sex?: string;
+  ethnicity?: string;
+  autismLevel?: string;
+  birthdate?: string;
 };
 
 export type PatientAccess = {
