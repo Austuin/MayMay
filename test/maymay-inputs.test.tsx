@@ -1,269 +1,118 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-
 import HomePage from '@/app/page';
-import { entriesFromEvents } from '@/lib/maymay-events';
-import { careStorageScope, loadCareCache, loadPendingMutations } from '@/lib/maymay-sync-storage';
-import { projectEntries } from '@/lib/maymay-sync-model';
-import type { FirebaseConnection } from '@/lib/maymay-firebase';
-import { createMeltdown, createPossibleTrigger, localDateValue, type DailyEntry } from '@/lib/maymay-types';
+import { createMeltdown, createPossibleTrigger, localDateValue } from '@/lib/maymay-types';
 
-const firebaseMocks = vi.hoisted(() => {
-  const connection = {
-    app: { options: { projectId: 'test-project' } },
-    db: {},
-    childId: 'maymay',
-    user: {
-      uid: 'caregiver-test',
-      email: 'caregiver@example.test',
-      displayName: 'Test Caregiver',
-    },
-    profile: {
-      familyId: 'maymay',
-      role: 'caregiver',
-      active: true,
-      displayName: 'Test Caregiver',
-      email: 'caregiver@example.test',
-    },
-    families: [{ familyId: 'maymay', name: 'Test Family', role: 'Caregiver', patients: [{ patientId: 'maymay', familyId: 'maymay', name: 'Test Patient' }] }],
-    patient: { patientId: 'maymay', familyId: 'maymay', name: 'Test Patient' },
+const mocks = vi.hoisted(() => {
+  const makeConnection = () => {
+    const patient = { patientId: 'sam', familyId: 'family-a', name: 'Sam' };
+    return {
+      app: { options: { projectId: 'demo-test' } }, db: {},
+      user: { uid: 'caregiver', email: 'caregiver@example.test', displayName: 'Caregiver' },
+      profile: { familyId: 'family-a', role: 'caregiver', active: true },
+      childId: 'sam', patient, requests: [],
+      families: [{ familyId: 'family-a', name: 'Family A', role: 'Caregiver', patients: [patient] }],
+    };
   };
-
-  return {
-    connection,
-    receive: null as null | ((events: any[]) => void),
-    records: [] as any[],
-    commit: vi.fn(),
-    registerFirebaseAccount: vi.fn(async () => ({ uid: 'new-test-user', email: 'new@example.test' })),
-    restoreFirebase: vi.fn(async () => connection),
-  };
+  return { makeConnection, connection: makeConnection(), save: vi.fn() };
 });
-
 vi.mock('@/lib/maymay-firebase', () => ({
-  assignFamilyRole: vi.fn(async () => undefined),
-  connectFirebase: vi.fn(async () => firebaseMocks.connection),
-  connectFirebaseWithGoogle: vi.fn(async () => firebaseMocks.connection),
-  disconnectFirebase: vi.fn(async () => undefined),
-  listFamilyUsers: vi.fn(async () => []),
-  loadRuntimeConfig: vi.fn(async () => ({
-    firebase: {
-      apiKey: 'test-api-key',
-      authDomain: 'test.firebaseapp.com',
-      projectId: 'test-project',
-      appId: 'test-app-id',
-    },
-    familyId: 'maymay',
-    childId: 'maymay',
-  })),
-  registerFirebaseAccount: firebaseMocks.registerFirebaseAccount,
-  restoreFirebase: firebaseMocks.restoreFirebase,
+  loadRuntimeConfig: async () => ({ firebase: { projectId: 'demo-test' } }),
+  restoreFirebase: async () => mocks.connection,
+  connectFirebase: async () => mocks.connection,
+  disconnectFirebase: async () => undefined,
+  selectFamilyPatient: (current: typeof mocks.connection, familyId: string, patientId: string) => {
+    const patient = current.families.find(family => family.familyId === familyId)!.patients.find(item => item.patientId === patientId)!;
+    return { ...current, childId: patientId, patient };
+  },
+}));
+vi.mock('@/hooks/use-care-sync', () => ({
+  useCareSync: () => ({ entries: [], status: 'saved', message: '', conflicts: [], getEntries: () => [], replaceEntry: mocks.save, stop: vi.fn() }),
 }));
 
-vi.mock('@/lib/maymay-sync-firebase', () => ({
-  watchCareEvents: vi.fn((_connection, receive) => {
-    firebaseMocks.receive = receive;
-    receive(firebaseMocks.records);
-    return () => { firebaseMocks.receive = null; };
-  }),
-  commitEventMutations: (...args: unknown[]) => firebaseMocks.commit(...args),
-}));
-const scope = () => careStorageScope(firebaseMocks.connection as unknown as FirebaseConnection);
-const secureContextCrypto = globalThis.crypto;
-
-function savedEntry(date: string) {
-  return projectEntries(loadCareCache(scope()), loadPendingMutations(scope())).find(entry => entry.date === date);
-}
-
-async function chooseSelect(user: ReturnType<typeof userEvent.setup>, label: string, option: string) {
-  await user.click(screen.getByRole('combobox', { name: label }));
-  await user.click(await screen.findByRole('option', { name: option }));
-}
-
-function cardForHeading(name: string) {
-  const heading = screen.getByText(name, { exact: true });
-  const card = heading.closest('[data-slot="card"]');
-  if (!(card instanceof HTMLElement)) throw new Error(`Card not found for ${name}`);
-  return card;
-}
-
-beforeEach(() => {
-  localStorage.clear();
-  Object.defineProperty(globalThis, 'crypto', {
-    configurable: true,
-    value: {
-      randomUUID: () => {
-        throw new DOMException('Not available in an insecure context', 'SecurityError');
-      },
-      getRandomValues: secureContextCrypto.getRandomValues.bind(secureContextCrypto),
-    },
-  });
-  firebaseMocks.records = [];
-  firebaseMocks.commit.mockReset();
-  firebaseMocks.commit.mockImplementation(async (_connection, mutations) => {
-    const last = mutations.at(-1);
-    const existing = firebaseMocks.records.find(event => event.id === last.eventId);
-    const value = last.after ?? existing ?? mutations.find((item: any) => item.after)?.after;
-    const record = { ...value, localDate: last.localDate, revision: (existing?.revision ?? 0) + 1, updatedAt: new Date().toISOString(), deletedAt: last.after ? null : 'deleted' };
-    firebaseMocks.records = [...firebaseMocks.records.filter(event => event.id !== last.eventId), record];
-    firebaseMocks.receive?.(firebaseMocks.records);
-    return record;
-  });
-  firebaseMocks.registerFirebaseAccount.mockClear();
-  firebaseMocks.restoreFirebase.mockResolvedValue(firebaseMocks.connection);
-});
-
+const originalCrypto = globalThis.crypto;
+beforeEach(() => { mocks.connection = mocks.makeConnection(); mocks.save.mockClear(); localStorage.clear(); sessionStorage.clear(); });
 afterEach(() => {
-  cleanup();
-  localStorage.clear();
-  Object.defineProperty(globalThis, 'crypto', { configurable: true, value: secureContextCrypto });
+  cleanup(); localStorage.clear(); sessionStorage.clear();
+  Object.defineProperty(globalThis, 'crypto', { configurable: true, value: originalCrypto });
 });
 
-describe('MayMay daily input coverage', () => {
+describe('MayMay Today inputs', () => {
   it('creates event IDs when Web Crypto is completely unavailable', () => {
     Object.defineProperty(globalThis, 'crypto', { configurable: true, value: undefined });
-
     expect(createPossibleTrigger().id).toMatch(/^local-[a-z0-9]+-[a-z0-9]+$/);
     expect(createMeltdown().id).toMatch(/^local-[a-z0-9]+-[a-z0-9]+$/);
   });
 
-  it('creates event IDs when randomUUID is unavailable on an HTTP LAN address', () => {
-    const trigger = createPossibleTrigger();
-    const meltdown = createMeltdown();
-
-    expect(trigger.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
-    expect(meltdown.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
-    expect(meltdown.id).not.toBe(trigger.id);
+  it('creates distinct event IDs on an HTTP LAN address without randomUUID', () => {
+    Object.defineProperty(globalThis, 'crypto', { configurable: true, value: {
+      randomUUID: () => { throw new DOMException('Not available'); },
+      getRandomValues: originalCrypto.getRandomValues.bind(originalCrypto),
+    } });
+    const ids = [createPossibleTrigger().id, createMeltdown().id];
+    expect(ids[0]).toMatch(/^[0-9a-f-]{36}$/);
+    expect(ids[0]).not.toBe(ids[1]);
   });
 
-  it('enters, saves, verifies, removes, and cleans up every daily tracking input', async () => {
-    const user = userEvent.setup();
-    const yesterday = new Date(`${localDateValue()}T12:00:00`);
-    yesterday.setDate(yesterday.getDate() - 1);
-    const date = localDateValue(yesterday);
+  it('records and clears answers and spontaneous events, preserving drafts across dates and tabs without saving to Firebase', async () => {
     render(<HomePage />);
-
     await screen.findByText("Today's check-in");
-    fireEvent.change(screen.getByLabelText('Entry date'), { target: { value: date } });
-    await screen.findByText('Past-day entry');
-
-    for (const period of ['morning', 'afternoon', 'evening'] as const) {
-      await user.click(within(screen.getByRole('group', { name: `${period} mood` })).getByRole('button', { name: 'Good' }));
-      await user.click(within(screen.getByRole('group', { name: `${period} mood details` })).getByRole('button', { name: 'Calm' }));
-    }
-
-    await user.click(within(screen.getByRole('group', { name: 'School attendance' })).getByRole('button', { name: 'Stayed home' }));
-    await user.type(screen.getByLabelText(/Reason or context/), 'Test appointment');
-    fireEvent.change(screen.getByLabelText(/Fell asleep/), { target: { value: '21:15' } });
-    fireEvent.change(screen.getByLabelText(/Woke up/), { target: { value: '06:45' } });
-    await user.type(screen.getByLabelText(/Wake-ups/), '2');
-    await user.click(within(screen.getByRole('group', { name: 'Sleep quality from 1 to 5' })).getByRole('button', { name: /^4/ }));
-
-    await chooseSelect(user, 'How is his health today?', 'A little unwell');
-    await user.type(screen.getByLabelText(/Health context/), 'Test sniffles');
-    await chooseSelect(user, 'Breakfast', 'Ate well');
-    await chooseSelect(user, 'Lunch', 'Ate some');
-    await chooseSelect(user, 'Dinner', 'Very little');
-    await chooseSelect(user, 'Snacks', 'Refused');
-
-    await user.click(within(screen.getByRole('group', { name: 'Bowel movement' })).getByRole('button', { name: 'Yes' }));
-    await user.type(screen.getByLabelText(/How many?/), '1');
-
-    const melatonin = screen.getByText('Melatonin').closest('.medication-panel');
-    const fluoxetine = screen.getByText('Fluoxetine').closest('.medication-panel');
-    if (!(melatonin instanceof HTMLElement) || !(fluoxetine instanceof HTMLElement)) throw new Error('Medication panels not found');
-    await user.click(within(melatonin).getByRole('button', { name: 'Given' }));
-    await user.type(within(melatonin).getByLabelText('Amount'), '5 mg');
-    fireEvent.change(within(melatonin).getByLabelText('Time'), { target: { value: '20:30' } });
-    await user.click(within(fluoxetine).getByRole('button', { name: 'Given' }));
-    await user.type(within(fluoxetine).getByLabelText('Amount'), '10 mg');
-    fireEvent.change(within(fluoxetine).getByLabelText('Time'), { target: { value: '07:30' } });
-
-    const triggerCard = cardForHeading('Possible triggers & changes');
-    await user.click(within(triggerCard).getByRole('button', { name: 'Add' }));
-    const triggerEvent = await screen.findByText('Possible trigger or change 1');
-    const triggerPanel = triggerEvent.closest('.trigger-card');
-    if (!(triggerPanel instanceof HTMLElement)) throw new Error('Possible trigger panel not found');
-    fireEvent.change(within(triggerPanel).getByLabelText(/Time/), { target: { value: '11:20' } });
-    await chooseSelect(user, 'Category', 'Other');
-    await user.type(within(triggerPanel).getByLabelText('Other category'), 'Test transition');
-    await chooseSelect(user, 'Observed effect', 'Moderate stress');
-    await user.type(within(triggerPanel).getByLabelText(/Brief context/), 'Test context');
-
-    const meltdownCard = cardForHeading('Meltdowns');
-    await user.click(within(meltdownCard).getByRole('button', { name: 'Add' }));
-    const meltdownEvent = await screen.findByText('Meltdown 1');
-    const meltdownPanel = meltdownEvent.closest('.meltdown-card');
-    if (!(meltdownPanel instanceof HTMLElement)) throw new Error('Meltdown panel not found');
-    fireEvent.change(within(meltdownPanel).getByLabelText(/Time/), { target: { value: '14:10' } });
-    await chooseSelect(user, 'Duration', '5–15 min');
-    await chooseSelect(user, 'Intensity', 'Moderate');
-    await chooseSelect(user, 'Likely trigger', 'Other');
-    await user.type(within(meltdownPanel).getByLabelText('Other trigger'), 'Test noise');
-    await chooseSelect(user, 'What helped most?', 'Quiet / space');
-    await user.type(within(meltdownPanel).getByLabelText(/Early signs/), 'Test pacing');
-    await user.click(within(screen.getByRole('group', { name: 'Aggression or risk of harm' })).getByRole('button', { name: 'No' }));
-    await user.type(within(meltdownPanel).getByLabelText(/Event notes/), 'Test event notes');
-    await user.type(screen.getByPlaceholderText('Add a brief note…'), 'Test daily note');
-
-    await waitFor(() => expect(savedEntry(date)?.possibleTriggers).toHaveLength(1), { timeout: 3_000 });
-    const saved = savedEntry(date);
-    expect(saved).toMatchObject({
-      moods: {
-        morning: { score: 4, tags: ['Calm'] },
-        afternoon: { score: 4, tags: ['Calm'] },
-        evening: { score: 4, tags: ['Calm'] },
-      },
-      schoolStatus: 'Stayed home',
-      schoolNote: 'Test appointment',
-      sleepStart: '21:15',
-      wakeTime: '06:45',
-      wakeUps: '2',
-      sleepQuality: 4,
-      healthStatus: 'A little unwell',
-      healthNotes: 'Test sniffles',
-      meals: { breakfast: 'Ate well', lunch: 'Ate some', dinner: 'Very little', snacks: 'Refused' },
-      bathroom: { bowelMovement: 'Yes', count: '1' },
-      medications: {
-        melatonin: { status: 'Given', amount: '5 mg', time: '20:30' },
-        fluoxetine: { status: 'Given', amount: '10 mg', time: '07:30' },
-      },
-      notes: 'Test daily note',
-    });
-    expect(saved?.possibleTriggers[0]).toMatchObject({
-      time: '11:20',
-      category: 'Other',
-      categoryOther: 'Test transition',
-      observedEffect: 'Moderate stress',
-      notes: 'Test context',
-    });
-    expect(saved?.meltdowns[0]).toMatchObject({
-      time: '14:10',
-      duration: '5–15 min',
-      intensity: 'Moderate',
-      trigger: 'Other',
-      triggerOther: 'Test noise',
-      earlySigns: 'Test pacing',
-      aggression: 'No',
-      whatHelped: 'Quiet / space',
-      notes: 'Test event notes',
-    });
-    await waitFor(() => expect(firebaseMocks.commit).toHaveBeenCalled());
-    await waitFor(() => expect(loadPendingMutations(scope())).toHaveLength(0), { timeout: 5_000 });
-    expect(entriesFromEvents(firebaseMocks.records).find(entry => entry.date === date)?.meltdowns[0]?.notes).toBe('Test event notes');
-
-    await user.click(within(triggerPanel).getByRole('button', { name: 'Remove possible trigger 1' }));
-    await user.click(within(meltdownPanel).getByRole('button', { name: 'Remove meltdown 1' }));
-    await waitFor(() => {
-      expect(savedEntry(date)?.possibleTriggers).toHaveLength(0);
-      expect(savedEntry(date)?.meltdowns).toHaveLength(0);
-    }, { timeout: 3_000 });
-
-    await waitFor(() => expect(loadPendingMutations(scope())).toHaveLength(0), { timeout: 5_000 });
-    const remote = entriesFromEvents(firebaseMocks.records).find(entry => entry.date === date);
-    expect(remote?.possibleTriggers).toHaveLength(0);
-    expect(remote?.meltdowns).toHaveLength(0);
-    localStorage.clear();
+    expect(screen.getByRole('note').textContent).toContain('session only');
+    expect((screen.getByRole('button', { name: 'Next day' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText('Entry date'), { target: { value: '2026-09-28' } });
+    expect(screen.getByText('0 of 3 answered')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Morning Mood mood'), { target: { value: 'Good' } });
+    fireEvent.change(screen.getByLabelText('Bowel Movements count'), { target: { value: '0' } });
+    const school = screen.getByText('Went to School on Time').closest('article')!;
+    fireEvent.click(within(school).getByRole('button', { name: 'No' }));
+    expect(screen.getByText('3 of 3 answered')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Add spontaneous event' }));
+    fireEvent.change(screen.getByLabelText('What happened?'), { target: { value: 'Calm walk' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save event' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'History' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Today' }));
+    expect(screen.getByText('3 of 3 answered')).toBeTruthy();
+    expect(screen.getByText('Calm walk')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Next day' }));
+    expect(screen.getByText('0 of 3 answered')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Previous day' }));
+    expect(screen.getByText('3 of 3 answered')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Calm walk' }));
+    expect(screen.queryByText('Calm walk')).toBeNull();
+    fireEvent.change(screen.getByLabelText('Morning Mood mood'), { target: { value: '' } });
+    screen.getAllByRole('button', { name: 'Clear answer' }).forEach(button => fireEvent.click(button));
+    expect(screen.getByText('0 of 3 answered')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Today' }));
+    expect((screen.getByLabelText('Entry date') as HTMLInputElement).value).toBe(localDateValue());
+    expect(mocks.save).not.toHaveBeenCalled();
     expect(localStorage.length).toBe(0);
+  });
+
+  it('separates patient drafts and clears them on sign-out', async () => {
+    mocks.connection.families[0].patients.push({ patientId: 'taylor', familyId: 'family-a', name: 'Taylor' });
+    render(<HomePage />);
+    await screen.findByText("Today's check-in");
+    fireEvent.change(screen.getByLabelText('Morning Mood mood'), { target: { value: 'Good' } });
+    fireEvent.change(screen.getByLabelText('Patient'), { target: { value: 'taylor' } });
+    expect((screen.getByLabelText('Morning Mood mood') as unknown as HTMLSelectElement).value).toBe('');
+    fireEvent.change(screen.getByLabelText('Patient'), { target: { value: 'sam' } });
+    expect((screen.getByLabelText('Morning Mood mood') as unknown as HTMLSelectElement).value).toBe('Good');
+    fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+    await screen.findByText('Sign in to continue');
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'mock-password' } });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Sign in' }).at(-1)!);
+    await screen.findByText("Today's check-in");
+    expect((screen.getByLabelText('Morning Mood mood') as unknown as HTMLSelectElement).value).toBe('');
+  });
+
+  it('allows viewers to browse dates while preventing editing', async () => {
+    mocks.connection.profile.role = 'viewer';
+    render(<HomePage />);
+    await screen.findByText("Today's check-in");
+    expect(screen.getByLabelText('Morning Mood mood').closest('fieldset')?.disabled).toBe(true);
+    expect(screen.queryByLabelText('Tracker options')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Add spontaneous event' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Previous day' }));
+    expect(screen.getByText('Past-day entry')).toBeTruthy();
   });
 });

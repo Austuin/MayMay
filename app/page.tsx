@@ -6,10 +6,6 @@ import {
   ArrowRight,
   BarChart3,
   Bell,
-  CalendarDays,
-  Check,
-  CheckCircle2,
-  ChevronDown,
   Cloud,
   CloudOff,
   HeartHandshake,
@@ -18,16 +14,10 @@ import {
   Info,
   LoaderCircle,
   LogOut,
-  Moon,
   Plus,
-  RefreshCw,
   Settings2,
   ShieldCheck,
-  Sparkles,
-  Trash2,
   TrendingUp,
-  Utensils,
-  Zap,
 } from 'lucide-react';
 import { CartesianGrid, Line, LineChart, XAxis, YAxis } from 'recharts';
 
@@ -40,16 +30,8 @@ import {
   type ChartConfig,
 } from '@/components/ui/chart';
 import { Input } from '@/components/ui/input';
-import { Progress } from '@/components/ui/progress';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Textarea } from '@/components/ui/textarea';
+import { TodayTracker, useTrackerDrafts } from './today-tracker';
 import { FamilySetup } from './family-setup';
 import { FamilyAccess } from './family-access';
 import { JoinFamilyForm } from './join-family-form';
@@ -77,24 +59,11 @@ import { watchPendingRequests, type PendingRequest } from '@/lib/maymay-invitati
 import { useCareSync } from '@/hooks/use-care-sync';
 import { hasLegacyCareCache } from '@/lib/maymay-sync-storage';
 import {
-  createPossibleTrigger,
-  createMeltdown,
   emptyEntry,
   historyCutoffDate,
   localDateValue,
   type DailyEntry,
-  type MeltdownEvent,
-  type MoodPeriod,
-  type PossibleTriggerEvent,
 } from '@/lib/maymay-types';
-
-const moods = [
-  { score: 5, label: 'Great', face: '😊', tone: 'bg-sky-100 text-sky-950' },
-  { score: 4, label: 'Good', face: '🙂', tone: 'bg-cyan-100 text-cyan-950' },
-  { score: 3, label: 'Okay', face: '😐', tone: 'bg-amber-100 text-amber-950' },
-  { score: 2, label: 'Struggling', face: '😟', tone: 'bg-orange-100 text-orange-950' },
-  { score: 1, label: 'Hard', face: '😣', tone: 'bg-rose-100 text-rose-950' },
-];
 
 function ConflictValues({ value }: { value: Record<string, unknown> | null }) {
   if (!value) return <p className="text-sm">Removed / not recorded</p>;
@@ -104,36 +73,6 @@ function ConflictValues({ value }: { value: Record<string, unknown> | null }) {
     <dd className="inline break-words">{Array.isArray(item) ? item.join(', ') : String(item)}</dd>
   </div>)}</dl>;
 }
-
-const moodTags = ['Calm', 'Energetic', 'Tired', 'Anxious', 'Irritable', 'Sad', 'Excited', 'Hard to tell'];
-const schoolOptions = ['Attended', 'Stayed home', 'Not scheduled'];
-const healthOptions = ['Great', 'A little unwell', 'Sick', 'Recovering', 'Not sure'];
-const mealOutcomes = ['Ate well', 'Ate some', 'Very little', 'Refused', 'Not offered'];
-const triggers = [
-  'Change in routine',
-  'Transition',
-  'Sensory overload',
-  'Communication difficulty',
-  'Denied access / waiting',
-  'Food / eating',
-  'School',
-  'Pain / illness',
-  'Unknown',
-  'Other',
-];
-const helpfulOptions = [
-  'Quiet / space',
-  'Comfort and reassurance',
-  'Sensory support',
-  'Food / drink',
-  'Preferred activity / item',
-  'Change of environment',
-  'Time',
-  'Nothing / not sure',
-];
-const durationOptions = ['Under 5 min', '5–15 min', '15–30 min', '30–60 min', '60+ min'];
-const intensityOptions = ['Mild', 'Moderate', 'High'];
-const observedEffectOptions = ['No visible effect', 'Mild stress', 'Moderate stress', 'Strong stress', 'Not sure'];
 
 const chartConfig = {
   mood: { label: 'Mood', color: 'var(--chart-1)' },
@@ -161,83 +100,6 @@ function entryMoodTags(entry: DailyEntry) {
   return [...new Set(Object.values(entry.moods).flatMap((period) => period.tags))];
 }
 
-function PillGroup({
-  label,
-  options,
-  value,
-  onChange,
-  multiple = false,
-}: {
-  label: string;
-  options: string[];
-  value: string | string[];
-  onChange: (value: string | string[]) => void;
-  multiple?: boolean;
-}) {
-  const selected = Array.isArray(value) ? value : value ? [value] : [];
-  return (
-    <fieldset className="chip-group" aria-label={label}>
-      {options.map((option) => {
-        const active = selected.includes(option);
-        return (
-          <button
-            key={option}
-            type="button"
-            className="choice-chip"
-            data-selected={active}
-            aria-pressed={active}
-            onClick={() => {
-              if (!multiple) return onChange(option);
-              onChange(active ? selected.filter((item) => item !== option) : [...selected, option]);
-            }}
-          >
-            {active && <Check className="size-3.5" />}
-            {option}
-          </button>
-        );
-      })}
-    </fieldset>
-  );
-}
-
-function MoodPeriodPanel({
-  period,
-  value,
-  onChange,
-}: {
-  period: 'morning' | 'afternoon' | 'evening';
-  value: MoodPeriod;
-  onChange: (next: MoodPeriod) => void;
-}) {
-  return (
-    <section className="mood-period" aria-labelledby={`${period}-mood-heading`}>
-      <div className="mood-period-heading">
-        <span aria-hidden="true">{period === 'morning' ? '☀️' : period === 'afternoon' ? '🌤️' : '🌙'}</span>
-        <div>
-          <h3 id={`${period}-mood-heading`}>How did his {period} feel?</h3>
-          <p>Choose the closest fit, then add any useful details.</p>
-        </div>
-      </div>
-      <fieldset className="mood-grid" aria-label={`${period} mood`}>
-        {moods.map((item) => {
-          const selected = value.score === item.score;
-          return (
-            <button key={item.score} type="button" className="mood-option" data-selected={selected} aria-pressed={selected} onClick={() => onChange({ ...value, score: item.score })}>
-              <span className={`mood-face ${item.tone}`} aria-hidden="true">{item.face}</span>
-              <span>{item.label}</span>
-              {selected && <Check className="mood-check" aria-hidden="true" />}
-            </button>
-          );
-        })}
-      </fieldset>
-      <div className="mt-4">
-        <p className="field-label">What else fits this {period}?</p>
-        <PillGroup label={`${period} mood details`} options={moodTags} value={value.tags} multiple onChange={(tags) => onChange({ ...value, tags: tags as string[] })} />
-      </div>
-    </section>
-  );
-}
-
 function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
     <label className="field-wrap">
@@ -247,143 +109,6 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
       </span>
       {children}
     </label>
-  );
-}
-
-function SelectField({
-  label,
-  value,
-  options,
-  placeholder = 'Choose one',
-  onChange,
-}: {
-  label: string;
-  value: string;
-  options: string[];
-  placeholder?: string;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <Field label={label}>
-      <Select value={value || null} onValueChange={(next) => next && onChange(next)}>
-        <SelectTrigger className="h-11 w-full bg-card text-base">
-          <SelectValue placeholder={placeholder}>{value}</SelectValue>
-        </SelectTrigger>
-        <SelectContent>
-          {options.map((option) => <SelectItem key={option} value={option}>{option}</SelectItem>)}
-        </SelectContent>
-      </Select>
-    </Field>
-  );
-}
-
-function MeltdownCard({
-  event,
-  number,
-  onChange,
-  onRemove,
-}: {
-  event: MeltdownEvent;
-  number: number;
-  onChange: (patch: Partial<MeltdownEvent>) => void;
-  onRemove: () => void;
-}) {
-  const [open, setOpen] = useState(true);
-  return (
-    <div className="meltdown-card">
-      <div className="flex items-center justify-between gap-3">
-        <button type="button" className="flex min-w-0 flex-1 items-center gap-3 text-left" onClick={() => setOpen(!open)}>
-          <span className="section-icon bg-rose-100 text-rose-800"><Zap className="size-5" /></span>
-          <span className="min-w-0">
-            <b className="block text-base">Meltdown {number}</b>
-            <small className="block truncate text-muted-foreground">
-              {[event.time, event.trigger, event.duration].filter(Boolean).join(' · ') || 'Add what you noticed'}
-            </small>
-          </span>
-          <ChevronDown className={`ml-auto size-4 transition-transform ${open ? 'rotate-180' : ''}`} />
-        </button>
-        <Button variant="destructive" size="icon" aria-label={`Remove meltdown ${number}`} onClick={onRemove}>
-          <Trash2 />
-        </Button>
-      </div>
-
-      {open && (
-        <div className="mt-5 grid gap-4 sm:grid-cols-2">
-          <Field label="Time" hint="optional">
-            <Input className="h-11 bg-card text-base" type="time" value={event.time} onChange={(e) => onChange({ time: e.target.value })} />
-          </Field>
-          <SelectField label="Duration" value={event.duration} options={durationOptions} onChange={(duration) => onChange({ duration })} />
-          <SelectField label="Intensity" value={event.intensity} options={intensityOptions} onChange={(intensity) => onChange({ intensity })} />
-          <SelectField label="Likely trigger" value={event.trigger} options={triggers} onChange={(trigger) => onChange({ trigger })} />
-          {event.trigger === 'Other' && (
-            <Field label="Other trigger">
-              <Input className="h-11 bg-card text-base" value={event.triggerOther} onChange={(e) => onChange({ triggerOther: e.target.value })} />
-            </Field>
-          )}
-          <SelectField label="What helped most?" value={event.whatHelped} options={helpfulOptions} onChange={(whatHelped) => onChange({ whatHelped })} />
-          <div className="sm:col-span-2">
-            <Field label="Early signs" hint="optional">
-              <Input className="h-11 bg-card text-base" placeholder="What happened just before?" value={event.earlySigns} onChange={(e) => onChange({ earlySigns: e.target.value })} />
-            </Field>
-          </div>
-          <div className="sm:col-span-2">
-            <p className="field-label">Aggression or risk of harm?</p>
-            <PillGroup label="Aggression or risk of harm" options={['No', 'Yes']} value={event.aggression} onChange={(aggression) => onChange({ aggression: String(aggression) })} />
-          </div>
-          <div className="sm:col-span-2">
-            <Field label="Event notes" hint="optional">
-              <Textarea className="min-h-24 bg-card text-base" placeholder="Brief, factual notes about what happened and what helped…" value={event.notes} onChange={(e) => onChange({ notes: e.target.value })} />
-            </Field>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function PossibleTriggerCard({
-  event,
-  number,
-  onChange,
-  onRemove,
-}: {
-  event: PossibleTriggerEvent;
-  number: number;
-  onChange: (patch: Partial<PossibleTriggerEvent>) => void;
-  onRemove: () => void;
-}) {
-  return (
-    <div className="trigger-card">
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-3">
-          <span className="section-icon bg-amber-100 text-amber-900"><Info className="size-5" /></span>
-          <span>
-            <b className="block text-base">Possible trigger or change {number}</b>
-            <small className="block text-muted-foreground">Record an observation without assuming it caused anything.</small>
-          </span>
-        </div>
-        <Button variant="ghost" size="icon" aria-label={`Remove possible trigger ${number}`} onClick={onRemove}>
-          <Trash2 />
-        </Button>
-      </div>
-      <div className="mt-5 grid gap-4 sm:grid-cols-2">
-        <Field label="Time" hint="optional">
-          <Input className="h-11 bg-card text-base" type="time" value={event.time} onChange={(e) => onChange({ time: e.target.value })} />
-        </Field>
-        <SelectField label="Category" value={event.category} options={triggers} onChange={(category) => onChange({ category })} />
-        {event.category === 'Other' && (
-          <Field label="Other category">
-            <Input className="h-11 bg-card text-base" value={event.categoryOther} onChange={(e) => onChange({ categoryOther: e.target.value })} />
-          </Field>
-        )}
-        <SelectField label="Observed effect" value={event.observedEffect} options={observedEffectOptions} onChange={(observedEffect) => onChange({ observedEffect })} />
-        <div className="sm:col-span-2">
-          <Field label="Brief context" hint="optional">
-            <Input className="h-11 bg-card text-base" placeholder="What changed or happened nearby?" value={event.notes} onChange={(e) => onChange({ notes: e.target.value })} />
-          </Field>
-        </div>
-      </div>
-    </div>
   );
 }
 
@@ -474,7 +199,6 @@ function AccessScreen({
 
 export default function HomePage() {
   const today = localDateValue();
-  const historyCutoff = historyCutoffDate();
   const [activeTab, setActiveTab] = useState('today');
   const [selectedDate, setSelectedDate] = useState(today);
   const [hydrated, setHydrated] = useState(false);
@@ -493,14 +217,10 @@ export default function HomePage() {
   const [familyMessage, setFamilyMessage] = useState('');
   const [pendingRequests, setPendingRequests] = useState<PendingRequest[]>([]);
   const connectionRef = useRef<FirebaseConnection | null>(null);
-  const selectedDateRef = useRef(selectedDate);
-  const sleepRef = useRef<HTMLDivElement>(null);
-  const foodRef = useRef<HTMLDivElement>(null);
-  const triggerRef = useRef<HTMLDivElement>(null);
-  const meltdownRef = useRef<HTMLDivElement>(null);
-
+  const trackerScope = JSON.stringify([firebaseConnection?.app.options.projectId, firebaseConnection?.user.uid, firebaseConnection?.profile.familyId, firebaseConnection?.childId]);
+  const trackerDrafts = useTrackerDrafts(trackerScope);
   const careSync = useCareSync(firebaseConnection);
-  const { entries, getEntries, replaceEntry, message: saveMessage } = careSync;
+  const { entries, message: saveMessage } = careSync;
   const [legacyCache, setLegacyCache] = useState(false);
 
   const entry = useMemo(
@@ -513,23 +233,6 @@ export default function HomePage() {
   const isMaster = currentRole === 'master';
   const isReadOnly = currentRole === 'viewer';
   const selectedFamily = firebaseConnection?.families.find(item => item.familyId === firebaseConnection.profile.familyId);
-  const isBackfill = selectedDate < today;
-  const progressItems = [
-    entry.moods.morning.score,
-    entry.moods.afternoon.score,
-    entry.moods.evening.score,
-    entry.schoolStatus,
-    entry.healthStatus,
-    entry.sleepQuality,
-    Object.values(entry.meals).some(Boolean),
-    entry.bathroom.bowelMovement,
-  ];
-  const progressCount = progressItems.filter(Boolean).length;
-
-  useEffect(() => {
-    selectedDateRef.current = selectedDate;
-  }, [selectedDate]);
-
   useEffect(() => {
     if (!firebaseConnection || !firebaseConnection.families.some(family => family.role === 'Primary')) {
       queueMicrotask(() => setPendingRequests([]));
@@ -583,40 +286,6 @@ export default function HomePage() {
     void start();
     return () => { alive = false; };
   }, []);
-
-  function updateEntry(patch: Partial<DailyEntry> | ((current: DailyEntry) => DailyEntry)) {
-    if (isReadOnly) return;
-    const current = getEntries().find((item) => item.date === selectedDate) ?? emptyEntry(selectedDate);
-    const next = typeof patch === 'function' ? patch(current) : { ...current, ...patch };
-    replaceEntry({ ...next, date: selectedDate, version: 3, updatedAt: new Date().toISOString() });
-  }
-
-  function updateMeltdown(id: string, patch: Partial<MeltdownEvent>) {
-    updateEntry((current) => ({
-      ...current,
-      meltdowns: current.meltdowns.map((item) => item.id === id ? { ...item, ...patch } : item),
-    }));
-  }
-
-  function updatePossibleTrigger(id: string, patch: Partial<PossibleTriggerEvent>) {
-    updateEntry((current) => ({
-      ...current,
-      possibleTriggers: current.possibleTriggers.map((item) => item.id === id ? { ...item, ...patch } : item),
-    }));
-  }
-
-  function addPossibleTrigger() {
-    updateEntry((current) => ({
-      ...current,
-      possibleTriggers: [...current.possibleTriggers, createPossibleTrigger()],
-    }));
-    window.setTimeout(() => triggerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
-  }
-
-  function addMeltdown() {
-    updateEntry((current) => ({ ...current, meltdowns: [...current.meltdowns, createMeltdown()] }));
-    window.setTimeout(() => meltdownRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
-  }
 
   function openEntry(date: string) {
     setSelectedDate(date);
@@ -780,6 +449,7 @@ export default function HomePage() {
   async function handleSignOut() {
     const connection = connectionRef.current;
     careSync.stop();
+    trackerDrafts.clear();
     connectionRef.current = null;
     setFirebaseConnection(null);
     setFamilyMessage('');
@@ -812,6 +482,7 @@ export default function HomePage() {
           execute(input) {
             const date = (input as { date?: unknown })?.date;
             if (typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('date must use YYYY-MM-DD');
+            if (date > localDateValue()) throw new Error('Choose today or an earlier date');
             if (date < historyCutoffDate()) throw new Error('date must be within the last three years');
             setSelectedDate(date);
             setActiveTab('today');
@@ -821,85 +492,11 @@ export default function HomePage() {
         },
         { signal: lifecycle.signal },
       );
-      await context.registerTool(
-        {
-          name: 'save_daily_checkin',
-          title: 'Save daily check-in',
-          description: 'Save morning, afternoon, and evening mood details plus school status and notes for one MayMay daily entry.',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              date: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
-              morning: {
-                type: 'object',
-                properties: { score: { type: 'integer', minimum: 1, maximum: 5 }, tags: { type: 'array', items: { type: 'string' } } },
-                additionalProperties: false,
-              },
-              afternoon: {
-                type: 'object',
-                properties: { score: { type: 'integer', minimum: 1, maximum: 5 }, tags: { type: 'array', items: { type: 'string' } } },
-                additionalProperties: false,
-              },
-              evening: {
-                type: 'object',
-                properties: { score: { type: 'integer', minimum: 1, maximum: 5 }, tags: { type: 'array', items: { type: 'string' } } },
-                additionalProperties: false,
-              },
-              schoolStatus: { type: 'string' },
-              healthStatus: { type: 'string', enum: healthOptions },
-              healthNotes: { type: 'string' },
-              notes: { type: 'string' },
-            },
-            required: ['date'],
-            additionalProperties: false,
-          },
-          annotations: { readOnlyHint: false, untrustedContentHint: false },
-          execute(input) {
-            if (!['master', 'caregiver'].includes(connectionRef.current?.profile.role ?? '')) {
-              throw new Error('A Caregiver or Primary role is required to save a check-in.');
-            }
-            const value = input as {
-              date?: string;
-              morning?: Partial<MoodPeriod>;
-              afternoon?: Partial<MoodPeriod>;
-              evening?: Partial<MoodPeriod>;
-              schoolStatus?: string;
-              healthStatus?: string;
-              healthNotes?: string;
-              notes?: string;
-            };
-            if (typeof value.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value.date)) throw new Error('date must use YYYY-MM-DD');
-            if (value.date < historyCutoffDate()) throw new Error('date must be within the last three years');
-            for (const period of [value.morning, value.afternoon, value.evening]) {
-              if (period?.score != null && (!Number.isInteger(period.score) || period.score < 1 || period.score > 5)) throw new Error('each mood score must be an integer from 1 to 5');
-            }
-            if (value.healthStatus && !healthOptions.includes(value.healthStatus)) throw new Error('healthStatus must be one of the available Health options');
-            const current = getEntries().find((item) => item.date === value.date) ?? emptyEntry(value.date);
-            const next = {
-              ...current,
-              moods: {
-                morning: value.morning ? { score: value.morning.score ?? current.moods.morning.score, tags: value.morning.tags?.map(String) ?? current.moods.morning.tags } : current.moods.morning,
-                afternoon: value.afternoon ? { score: value.afternoon.score ?? current.moods.afternoon.score, tags: value.afternoon.tags?.map(String) ?? current.moods.afternoon.tags } : current.moods.afternoon,
-                evening: value.evening ? { score: value.evening.score ?? current.moods.evening.score, tags: value.evening.tags?.map(String) ?? current.moods.evening.tags } : current.moods.evening,
-              },
-              ...(typeof value.schoolStatus === 'string' ? { schoolStatus: value.schoolStatus } : {}),
-              ...(typeof value.healthStatus === 'string' ? { healthStatus: value.healthStatus } : {}),
-              ...(typeof value.healthNotes === 'string' ? { healthNotes: value.healthNotes } : {}),
-              ...(typeof value.notes === 'string' ? { notes: value.notes } : {}),
-              updatedAt: new Date().toISOString(),
-            };
-            replaceEntry(next);
-            setSelectedDate(value.date);
-            setActiveTab('today');
-            return { queued: value.date, storage: 'local-draft', sync: 'pending' };
-          },
-        },
-        { signal: lifecycle.signal },
-      );
+
     };
     void register().catch(() => undefined);
     return () => lifecycle.abort();
-  }, [getEntries, replaceEntry]);
+  }, []);
 
   if (!hydrated || syncState === 'starting' || syncState === 'connecting'
     || (syncState === 'connected' && Boolean(firebaseConnection?.childId) && careSync.status === 'loading')) {
@@ -979,21 +576,21 @@ export default function HomePage() {
                 {selectedFamily.patients.map(patient => <option key={patient.patientId} value={patient.patientId}>{patient.name}</option>)}
               </select>
             </label>}
-            <div className="sync-pill" aria-live="polite" aria-label={`Data storage status: ${careSync.status === 'saved' ? 'Firestore synced' : 'sync pending'}`}>
+            {activeTab !== 'today' && <div className="sync-pill" aria-live="polite" aria-label={`Data storage status: ${careSync.status === 'saved' ? 'Firestore synced' : 'sync pending'}`}>
               {careSync.status === 'saved' ? <Cloud /> : <CloudOff />}
               <span>{careSync.status === 'saved' ? 'Firestore synced' : 'Sync pending'}</span>
-            </div>
+            </div>}
             <Button variant="outline" size="icon-lg" aria-label="Sign out" onClick={handleSignOut}><LogOut /></Button>
           </div>
         </div>
       </header>
 
       <div className="mx-auto max-w-[1160px] space-y-3 px-4 pt-4 sm:px-6 lg:px-8">
-        {careSync.status === 'error' && <div role="alert" className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-amber-950">
+        {activeTab !== 'today' && careSync.status === 'error' && <div role="alert" className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-amber-950">
           <p>{saveMessage}</p>
           <Button variant="outline" className="mt-2" onClick={careSync.retry}>Retry sync</Button>
         </div>}
-        {careSync.conflicts.map(conflict => <section key={conflict.eventId} aria-label={`Conflicting record for ${conflict.date}`} className="rounded-xl border border-amber-300 bg-card p-4">
+        {activeTab !== 'today' && careSync.conflicts.map(conflict => <section key={conflict.eventId} aria-label={`Conflicting record for ${conflict.date}`} className="rounded-xl border border-amber-300 bg-card p-4">
           <p className="font-semibold">Two edits to the same record · {conflict.date}</p>
           <p className="text-sm text-muted-foreground">Your edit is kept on this device. The shared record has not been overwritten.</p>
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
@@ -1016,155 +613,7 @@ export default function HomePage() {
         </TabsList>
 
         <TabsContent value="today" className="mt-5">
-          <section className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
-            <div className="space-y-5">
-              <div className="page-intro">
-                <div>
-                  <p className="eyebrow">{selectedDate === today ? "Today's check-in" : 'Past-day entry'}</p>
-                  <h1>{displayDate(selectedDate)}</h1>
-                  <p>Capture what matters now. You can come back all day.</p>
-                </div>
-                <div className="date-field">
-                  <span className="sr-only">Entry date</span><CalendarDays className="size-4" />
-                  <Input type="date" value={selectedDate} min={historyCutoff} max={today} onChange={(event) => setSelectedDate(event.target.value || today)} aria-label="Entry date" />
-                </div>
-              </div>
-
-              {isBackfill && (
-                <div className="backfill-note" role="note">
-                  <Info /><span><b>Adding a past day.</b> Memory can blur details, so record only what you feel confident about.</span>
-                  <Button variant="ghost" size="sm" onClick={() => setSelectedDate(today)}>Return to today</Button>
-                </div>
-              )}
-
-              <Card className="feature-card">
-                <CardHeader className="gap-2">
-                  <div className="section-icon bg-sky-100 text-sky-900"><Sparkles className="size-5" /></div>
-                  <CardTitle className="text-xl font-bold tracking-[-0.02em]">Mood through the day</CardTitle>
-                  <p className="text-base text-muted-foreground">Morning, afternoon, and evening can feel very different. Add each one when it makes sense.</p>
-                </CardHeader>
-                <CardContent className="mood-periods">
-                  {(['morning', 'afternoon', 'evening'] as const).map((period) => (
-                    <MoodPeriodPanel key={period} period={period} value={entry.moods[period]} onChange={(value) => updateEntry({ moods: { ...entry.moods, [period]: value } })} />
-                  ))}
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader><CardTitle className="flex items-center gap-3 text-xl font-bold"><span className="section-icon bg-cyan-100 text-cyan-900"><CalendarDays className="size-5" /></span>Daily basics</CardTitle></CardHeader>
-                <CardContent className="space-y-6">
-                  <div>
-                    <p className="field-label">School</p>
-                    <PillGroup label="School attendance" options={schoolOptions} value={entry.schoolStatus} onChange={(schoolStatus) => updateEntry({ schoolStatus: String(schoolStatus) })} />
-                  </div>
-                  {entry.schoolStatus === 'Stayed home' && <Field label="Reason or context" hint="optional"><Input className="h-11 text-base" value={entry.schoolNote} onChange={(e) => updateEntry({ schoolNote: e.target.value })} /></Field>}
-                  <div ref={sleepRef} className="form-subsection scroll-mt-28">
-                    <div className="subsection-title"><Moon />Sleep <small>previous night</small></div>
-                    <div className="grid gap-4 sm:grid-cols-3">
-                      <Field label="Fell asleep" hint="optional"><Input className="h-11 text-base" type="time" value={entry.sleepStart} onChange={(e) => updateEntry({ sleepStart: e.target.value })} /></Field>
-                      <Field label="Woke up" hint="optional"><Input className="h-11 text-base" type="time" value={entry.wakeTime} onChange={(e) => updateEntry({ wakeTime: e.target.value })} /></Field>
-                      <Field label="Wake-ups" hint="optional"><Input className="h-11 text-base" type="number" min="0" inputMode="numeric" value={entry.wakeUps} onChange={(e) => updateEntry({ wakeUps: e.target.value })} /></Field>
-                    </div>
-                    <div className="mt-4">
-                      <p className="field-label">Sleep quality</p>
-                      <fieldset className="rating-row" aria-label="Sleep quality from 1 to 5">
-                        {[1, 2, 3, 4, 5].map((rating) => <button key={rating} type="button" data-selected={entry.sleepQuality === rating} aria-pressed={entry.sleepQuality === rating} onClick={() => updateEntry({ sleepQuality: rating })}>{rating}<small>{rating === 1 ? 'Poor' : rating === 5 ? 'Great' : ''}</small></button>)}
-                      </fieldset>
-                    </div>
-                  </div>
-
-                  <div className="form-subsection">
-                    <div className="subsection-title"><HeartHandshake />Health</div>
-                    <SelectField label="How is his health today?" value={entry.healthStatus} options={healthOptions} onChange={(healthStatus) => updateEntry({ healthStatus })} />
-                    {entry.healthStatus !== 'Great' && (
-                      <div className="mt-4">
-                        <Field label="Health context" hint="optional">
-                          <Input className="h-11 text-base" placeholder="Brief symptoms or observations" value={entry.healthNotes} onChange={(event) => updateEntry({ healthNotes: event.target.value })} />
-                        </Field>
-                      </div>
-                    )}
-                  </div>
-
-                  <div ref={foodRef} className="form-subsection scroll-mt-28">
-                    <div className="subsection-title"><Utensils />Food &amp; appetite</div>
-                    <p className="mb-4 text-sm text-muted-foreground">Choose an outcome for each meal so MayMay can learn consistent patterns.</p>
-                    <div className="grid gap-4 sm:grid-cols-2">
-                      {(['breakfast', 'lunch', 'dinner', 'snacks'] as const).map((meal) => <SelectField key={meal} label={meal[0].toUpperCase() + meal.slice(1)} value={entry.meals[meal]} options={mealOutcomes} placeholder="Choose meal outcome" onChange={(outcome) => updateEntry({ meals: { ...entry.meals, [meal]: outcome } })} />)}
-                    </div>
-                  </div>
-
-                  <div className="form-subsection">
-                    <div className="subsection-title">Bathroom</div>
-                    <div className="grid items-end gap-4 sm:grid-cols-[1fr_150px]">
-                      <div><p className="field-label">Bowel movement?</p><PillGroup label="Bowel movement" options={['Yes', 'No']} value={entry.bathroom.bowelMovement} onChange={(bowelMovement) => updateEntry({ bathroom: { ...entry.bathroom, bowelMovement: String(bowelMovement) } })} /></div>
-                      {entry.bathroom.bowelMovement === 'Yes' && <Field label="How many?" hint="optional"><Input className="h-11 text-base" type="number" min="1" inputMode="numeric" value={entry.bathroom.count} onChange={(e) => updateEntry({ bathroom: { ...entry.bathroom, count: e.target.value } })} /></Field>}
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader><CardTitle className="text-xl font-bold">Medications</CardTitle><p className="text-base text-muted-foreground">Track only what was given. This is a record, not a dosing guide.</p></CardHeader>
-                <CardContent className="grid gap-5 sm:grid-cols-2">
-                  {(['melatonin', 'fluoxetine'] as const).map((medication) => {
-                    const item = entry.medications[medication];
-                    const title = medication === 'melatonin' ? 'Melatonin' : 'Fluoxetine';
-                    return <div key={medication} className="medication-panel"><p className="field-label">{title}</p><PillGroup label={`${title} status`} options={['Given', 'Not given']} value={item.status} onChange={(status) => updateEntry({ medications: { ...entry.medications, [medication]: { ...item, status: String(status) } } })} />{item.status === 'Given' && <div className="mt-4 grid grid-cols-2 gap-3"><Field label="Amount"><Input className="h-11 text-base" placeholder="e.g. 5 mg" value={item.amount} onChange={(e) => updateEntry({ medications: { ...entry.medications, [medication]: { ...item, amount: e.target.value } } })} /></Field><Field label="Time"><Input className="h-11 text-base" type="time" value={item.time} onChange={(e) => updateEntry({ medications: { ...entry.medications, [medication]: { ...item, time: e.target.value } } })} /></Field></div>}</div>;
-                  })}
-                </CardContent>
-              </Card>
-
-              <Card ref={triggerRef} className="scroll-mt-28">
-                <CardHeader className="flex-row items-center justify-between gap-4">
-                  <div><CardTitle className="flex items-center gap-3 text-xl font-bold"><span className="section-icon bg-amber-100 text-amber-900"><Info className="size-5" /></span>Possible triggers &amp; changes</CardTitle><p className="mt-2 text-base text-muted-foreground">Add structured observations such as transitions, sensory overload, waiting, illness, or food-related stress.</p></div>
-                  <Button variant="outline" className="h-10" onClick={addPossibleTrigger}><Plus /> Add</Button>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  {entry.possibleTriggers.length ? entry.possibleTriggers.map((event, index) => <PossibleTriggerCard key={event.id} event={event} number={index + 1} onChange={(patch) => updatePossibleTrigger(event.id, patch)} onRemove={() => updateEntry((current) => ({ ...current, possibleTriggers: current.possibleTriggers.filter((item) => item.id !== event.id) }))} />) : <div className="quiet-empty"><Info /><div><b>No possible triggers or changes recorded</b><p>Add one when something notable happens, whether or not a meltdown follows.</p></div></div>}
-                </CardContent>
-              </Card>
-
-              <Card ref={meltdownRef} className="scroll-mt-28">
-                <CardHeader className="flex-row items-center justify-between gap-4">
-                  <div><CardTitle className="flex items-center gap-3 text-xl font-bold"><span className="section-icon bg-rose-100 text-rose-800"><Zap className="size-5" /></span>Meltdowns</CardTitle><p className="mt-2 text-base text-muted-foreground">Add each event as it happens or soon after.</p></div>
-                  <Button className="h-10" onClick={addMeltdown}><Plus /> Add</Button>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  {entry.meltdowns.length ? entry.meltdowns.map((event, index) => <MeltdownCard key={event.id} event={event} number={index + 1} onChange={(patch) => updateMeltdown(event.id, patch)} onRemove={() => updateEntry((current) => ({ ...current, meltdowns: current.meltdowns.filter((item) => item.id !== event.id) }))} />) : <div className="quiet-empty"><CheckCircle2 /><div><b>No meltdowns recorded for this day</b><p>Add one only if an event occurs.</p></div></div>}
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader><CardTitle className="text-xl font-bold">Notes</CardTitle><p className="text-base text-muted-foreground">Anything unusual, helpful, or worth remembering.</p></CardHeader>
-                <CardContent><Textarea className="min-h-32 bg-card text-base" placeholder="Add a brief note…" value={entry.notes} onChange={(e) => updateEntry({ notes: e.target.value })} /></CardContent>
-              </Card>
-
-              <div className="save-bar" aria-live="polite"><CheckCircle2 /><span><b>{saveMessage}</b><small>Changes save automatically.</small></span></div>
-            </div>
-
-            <aside className="space-y-5 lg:sticky lg:top-24">
-              <Card className="daily-progress-card">
-                <CardHeader><p className="eyebrow text-sky-200">Today at a glance</p><CardTitle className="text-2xl font-bold text-white">A little at a time</CardTitle></CardHeader>
-                <CardContent className="space-y-4 text-sky-50">
-                  <p className="text-base leading-relaxed text-sky-100">Entries save as you go, so it&apos;s okay to stop and return later.</p>
-                  <div className="rounded-2xl bg-white/10 p-4"><div className="flex items-center justify-between text-sm font-semibold"><span>Check-in progress</span><span>{progressCount} of 7</span></div><Progress value={(progressCount / 7) * 100} className="mt-3 [&_[data-slot=progress-track]]:bg-white/15 [&_[data-slot=progress-indicator]]:bg-[#ffcb69]" /></div>
-                  <Button className="h-11 w-full bg-white text-slate-950 hover:bg-sky-50" onClick={() => document.querySelector('.form-subsection')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>Continue check-in <ArrowRight /></Button>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader><CardTitle className="text-base font-bold">Quick add</CardTitle></CardHeader>
-                <CardContent className="space-y-2">
-                  <button type="button" className="quick-link" onClick={addPossibleTrigger}><span className="event-icon bg-amber-100 text-amber-900"><Info /></span><span><b>Possible trigger</b><small>Time, category, observed effect</small></span><Plus /></button>
-                  <button type="button" className="quick-link" onClick={addMeltdown}><span className="event-icon bg-rose-100 text-rose-800"><Zap /></span><span><b>Meltdown</b><small>Trigger, duration, support</small></span><Plus /></button>
-                  <button type="button" className="quick-link" onClick={() => sleepRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}><span className="event-icon bg-indigo-100 text-indigo-800"><Moon /></span><span><b>Sleep</b><small>Quality and wake-ups</small></span><ArrowRight /></button>
-                  <button type="button" className="quick-link" onClick={() => foodRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}><span className="event-icon bg-amber-100 text-amber-900"><Utensils /></span><span><b>Food</b><small>Meals and appetite</small></span><ArrowRight /></button>
-                </CardContent>
-              </Card>
-
-              <Card className="border-dashed bg-transparent shadow-none"><CardContent className="flex gap-3 py-1"><div className="mt-0.5 rounded-full bg-secondary p-2 text-primary"><ShieldCheck className="size-4" /></div><div><p className="font-bold">Private by default</p><p className="mt-1 text-sm leading-relaxed text-muted-foreground">Your notes stay on this device until you connect your private Firestore account.</p></div></CardContent></Card>
-            </aside>
-          </section>
+          <TodayTracker key={trackerScope} patientName={firebaseConnection?.patient?.name ?? 'Patient'} date={selectedDate} onDateChange={setSelectedDate} data={trackerDrafts.data} onChange={trackerDrafts.update} readOnly={isReadOnly} />
         </TabsContent>
 
         <TabsContent value="insights" className="mt-5">
