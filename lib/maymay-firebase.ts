@@ -1,7 +1,7 @@
 import { deleteApp, getApps, initializeApp, type FirebaseApp } from 'firebase/app';
 import {
   browserLocalPersistence, createUserWithEmailAndPassword, getAuth, GoogleAuthProvider,
-  setPersistence, signInWithEmailAndPassword, signInWithPopup, signOut, updateProfile, type User,
+  sendPasswordResetEmail, setPersistence, signInWithEmailAndPassword, signInWithPopup, signOut, updateProfile, type User,
 } from 'firebase/auth';
 import {
   arrayUnion, collection, deleteField, doc, getDoc, getFirestore, serverTimestamp,
@@ -23,6 +23,7 @@ export type PatientFields = {
   ethnicity?: string;
   autismLevel?: string;
   birthdate?: string;
+  supportNeeds?: string;
 };
 export type FirebaseConnection = {
   app: FirebaseApp;
@@ -198,6 +199,7 @@ function patientValues(input: PatientFields) {
     ...(input.ethnicity?.trim() ? { ethnicity: input.ethnicity.trim() } : {}),
     ...(input.autismLevel?.trim() ? { autismLevel: input.autismLevel.trim() } : {}),
     ...(input.birthdate?.trim() ? { birthdate: input.birthdate.trim() } : {}),
+    ...(input.supportNeeds?.trim() ? { supportNeeds: input.supportNeeds.trim() } : {}),
   };
 }
 
@@ -230,9 +232,14 @@ export async function updatePatient(connection: FirebaseConnection, input: Patie
     ...values,
     age: values.age ?? deleteField(), sex: values.sex ?? deleteField(),
     ethnicity: values.ethnicity ?? deleteField(), autismLevel: values.autismLevel ?? deleteField(),
-    birthdate: values.birthdate ?? deleteField(), dateUpdated: serverTimestamp(),
+    birthdate: values.birthdate ?? deleteField(), supportNeeds: values.supportNeeds ?? deleteField(), dateUpdated: serverTimestamp(),
   });
   return refreshFirebaseConnection(connection, { familyId: family.familyId, patientId: connection.childId });
+}
+
+export async function resetFirebasePassword(config: FirebaseWebConfig, email: string) {
+  const app = await appFor(config);
+  await sendPasswordResetEmail(getAuth(app), email.trim());
 }
 
 export async function restoreFirebase(config: FirebaseWebConfig): Promise<FirebaseConnection | null> {

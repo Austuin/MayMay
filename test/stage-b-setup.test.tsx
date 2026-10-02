@@ -15,7 +15,7 @@ const mocks = vi.hoisted(() => {
     ...base, profile: { familyId: 'family-a', role: 'master', active: true },
     childId: '', families: [{ familyId: 'family-a', name: 'Smith Family', role: 'Primary', patients: [] }],
   };
-  const patient = { patientId: 'patient-a', familyId: 'family-a', name: 'Sam', sex: 'Female', ethnicity: 'Example', age: 8 };
+  const patient = { patientId: 'patient-a', familyId: 'family-a', name: 'Sam', sex: 'Female', ethnicity: 'Example', birthdate: '2018-01-02', supportNeeds: 'Allow extra response time' };
   const ready = {
     ...family, childId: patient.patientId, patient,
     families: [{ ...family.families[0], patients: [patient] }],
@@ -24,6 +24,9 @@ const mocks = vi.hoisted(() => {
     empty, family, ready,
     restoreFirebase: vi.fn(async (): Promise<typeof empty | null> => empty),
     registerFirebaseAccount: vi.fn(async () => empty),
+    resetFirebasePassword: vi.fn(async (_config: unknown, _email: string) => undefined),
+    connectFirebase: vi.fn(async () => ready),
+    disconnectFirebase: vi.fn(async () => undefined),
     createFamily: vi.fn(async () => family),
     createPatient: vi.fn(async () => ready),
     updatePatient: vi.fn(async (_connection: unknown, fields: Record<string, unknown>) => ({
@@ -41,10 +44,11 @@ vi.mock('@/lib/maymay-firebase', () => ({
   updatePatient: mocks.updatePatient,
   refreshFirebaseConnection: vi.fn(async (connection: unknown) => connection),
   selectFamilyPatient: vi.fn(),
-  connectFirebase: vi.fn(),
+  connectFirebase: mocks.connectFirebase,
   connectFirebaseWithGoogle: vi.fn(),
   registerFirebaseAccount: mocks.registerFirebaseAccount,
-  disconnectFirebase: vi.fn(),
+  disconnectFirebase: mocks.disconnectFirebase,
+  resetFirebasePassword: mocks.resetFirebasePassword,
 }));
 
 vi.mock('@/hooks/use-care-sync', () => ({
@@ -86,23 +90,25 @@ describe('Stage B setup', () => {
     await waitFor(() => expect(mocks.registerFirebaseAccount).toHaveBeenCalledWith(
       expect.any(Object), 'Setup User', 'setup@example.test', 'a-test-password',
     ));
-    await screen.findByRole('heading', { name: 'Create a family' });
+    await screen.findByRole('heading', { name: 'Your family’s care space' });
   });
 
   it('creates a family, saves optional patient data, and later removes an optional field', async () => {
     render(<HomePage />);
-    await screen.findByRole('heading', { name: 'Create a family' });
+    fireEvent.click(await screen.findByRole('button', { name: /Create a family/ }));
     fireEvent.change(screen.getByLabelText('Family name'), { target: { value: 'Smith Family' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create family' }));
     await waitFor(() => expect(mocks.createFamily).toHaveBeenCalledWith(mocks.empty, 'Smith Family'));
     await screen.findByRole('heading', { name: 'Add a patient to Smith Family' });
     fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Sam' } });
-    fireEvent.change(screen.getByLabelText('Age, if birthdate is unknown'), { target: { value: '8' } });
+    fireEvent.click(screen.getByText('Add optional details'));
+    fireEvent.change(screen.getByLabelText('Birthdate'), { target: { value: '2018-01-02' } });
+    fireEvent.change(screen.getByLabelText('Communication and support needs'), { target: { value: 'Allow extra response time' } });
     fireEvent.change(screen.getByLabelText('Sex'), { target: { value: 'Female' } });
     fireEvent.change(screen.getByLabelText('Ethnicity'), { target: { value: 'Example' } });
     fireEvent.click(screen.getByRole('button', { name: 'Add patient' }));
     await waitFor(() => expect(mocks.createPatient).toHaveBeenCalledWith(mocks.family, 'family-a', {
-      name: 'Sam', age: 8, sex: 'Female', ethnicity: 'Example',
+      name: 'Sam', birthdate: '2018-01-02', sex: 'Female', ethnicity: 'Example', supportNeeds: 'Allow extra response time',
     }));
     await screen.findByText("Today's check-in");
     fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
@@ -110,10 +116,55 @@ describe('Stage B setup', () => {
     const ethnicity = within(editForm).getByLabelText('Ethnicity');
     expect((ethnicity as HTMLInputElement).value).toBe('Example');
     fireEvent.change(ethnicity, { target: { value: '' } });
+    fireEvent.change(within(editForm).getByLabelText('Communication and support needs'), { target: { value: '' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save patient details' }));
     await waitFor(() => expect(mocks.updatePatient).toHaveBeenCalledWith(mocks.ready, {
-      name: 'Sam', age: 8, sex: 'Female',
+      name: 'Sam', birthdate: '2018-01-02', sex: 'Female',
     }));
     expect((within(editForm).getByLabelText('Ethnicity') as HTMLInputElement).value).toBe('');
+  });
+
+  it('resets a password, returns to sign in, opens the patient directly, and signs out', async () => {
+    mocks.restoreFirebase.mockResolvedValueOnce(null);
+    render(<HomePage />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Forgot password?' }));
+    fireEvent.change(screen.getByLabelText('Reset email'), { target: { value: 'setup@example.test' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send reset link' }));
+    await screen.findByText(/If an account uses that email/);
+    expect(mocks.resetFirebasePassword).toHaveBeenCalledWith(expect.any(Object), 'setup@example.test');
+    fireEvent.click(screen.getByRole('button', { name: 'Back to sign in' }));
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'setup@example.test' } });
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'a-test-password' } });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Sign in' }).at(-1)!);
+    await screen.findByText("Today's check-in");
+    expect(screen.queryByLabelText('Family')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+    await screen.findByRole('heading', { name: 'Sign in to continue' });
+    expect(mocks.disconnectFirebase).toHaveBeenCalled();
+    expect((screen.getByLabelText('Password') as HTMLInputElement).value).toBe('');
+  });
+
+  it('offers a join path and allows returning to family creation', async () => {
+    render(<HomePage />);
+    fireEvent.click(await screen.findByRole('button', { name: /Enter family code/ }));
+    expect(screen.getByLabelText('Family Code')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Back to setup options' }));
+    fireEvent.click(screen.getByRole('button', { name: /Create a family/ }));
+    fireEvent.change(screen.getByLabelText('Family name'), { target: { value: '   ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create family' }));
+    expect(screen.getByRole('alert').textContent).toContain('Enter a family name');
+    expect(mocks.createFamily).not.toHaveBeenCalled();
+  });
+
+  it('allows retry after a password reset fails', async () => {
+    mocks.restoreFirebase.mockResolvedValueOnce(null);
+    mocks.resetFirebasePassword.mockRejectedValueOnce({ code: 'auth/network-request-failed' });
+    render(<HomePage />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Forgot password?' }));
+    fireEvent.change(screen.getByLabelText('Reset email'), { target: { value: 'setup@example.test' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send reset link' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('Check your connection');
+    fireEvent.click(screen.getByRole('button', { name: 'Send reset link' }));
+    await screen.findByText(/If an account uses that email/);
   });
 });

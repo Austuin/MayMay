@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FamilyAccess } from '@/app/family-access';
 import { JoinFamilyForm } from '@/app/join-family-form';
+import { FamilySetup } from '@/app/family-setup';
 import type { FirebaseConnection } from '@/lib/maymay-firebase';
 
 const mocks = vi.hoisted(() => {
@@ -15,7 +16,9 @@ const mocks = vi.hoisted(() => {
     approve: vi.fn(async (_connection, _familyId, userId, role, patientIds) => {
       members = members.map(member => member.userId === userId ? { ...member, status: 'Active', role, patientIds } : member);
     }),
-    reject: vi.fn(), changePatients: vi.fn(), disable: vi.fn(), restore: vi.fn(),
+    reject: vi.fn(async (_connection, _familyId, userId) => {
+      members = members.map(member => member.userId === userId ? { ...member, status: 'Rejected' } : member);
+    }), changePatients: vi.fn(), disable: vi.fn(), restore: vi.fn(),
     setRole: vi.fn(), transfer: vi.fn(),
     request: vi.fn(), cancel: vi.fn(),
     refresh: vi.fn(),
@@ -74,8 +77,10 @@ describe('Stage C invitation controls', () => {
     }
     render(<Harness />);
     fireEvent.change(screen.getByLabelText('Family Code'), { target: { value: 'MM1.family-a.0123456789abcdef0123456789abcdef' } });
+    fireEvent.change(screen.getByLabelText('Relationship'), { target: { value: 'Sibling' } });
     fireEvent.click(screen.getByRole('button', { name: 'Request access' }));
-    await waitFor(() => expect(mocks.request).toHaveBeenCalledWith(initial, 'MM1.family-a.0123456789abcdef0123456789abcdef'));
+    await waitFor(() => expect(mocks.request).toHaveBeenCalledWith(initial, 'MM1.family-a.0123456789abcdef0123456789abcdef', 'Sibling'));
+    expect((screen.getByLabelText('Relationship') as HTMLInputElement).value).toBe('');
     expect(await screen.findByText(/Waiting for approval/)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     await waitFor(() => expect(mocks.cancel).toHaveBeenCalledWith(pending, 'family-a'));
@@ -109,6 +114,28 @@ describe('Stage C invitation controls', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Check access' }));
     await waitFor(() => expect(mocks.refresh).toHaveBeenCalledWith(pending));
     expect(onChanged).toHaveBeenCalledWith(approved);
+  });
+
+  it('lets an approved caregiver without patients refresh their access', async () => {
+    const ready = connection();
+    const waiting = { ...ready, childId: '', families: [{ ...ready.families[0], role: 'Caregiver' as const, patients: [] }] };
+    mocks.refresh.mockResolvedValue(ready);
+    const changed = vi.fn();
+    render(<FamilySetup connection={waiting} onChanged={changed} onCreateFamily={vi.fn()} onCreatePatient={vi.fn()} onSelectFamily={vi.fn()} onMembershipsChanged={vi.fn()} onSignOut={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Check patient access' }));
+    await waitFor(() => expect(changed).toHaveBeenCalledWith(ready));
+  });
+
+  it('shows relationship and date, rejects a request, and removes the notification', async () => {
+    const owner = connection();
+    mocks.setMembers([{ familyId: 'family-a', userId: 'joining', role: 'Caregiver', status: 'Pending', patientIds: [], requesterName: 'Joining', requesterEmail: 'joining@example.test', relationship: 'Sibling', requestedAt: '2026-10-01T12:00:00Z' }]);
+    render(<FamilyAccess connection={owner} onChanged={vi.fn()} />);
+    await screen.findByText('Relationship: Sibling');
+    expect(screen.getByText(/^Requested /)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Reject' }));
+    await screen.findByText('No requests are waiting.');
+    expect(mocks.reject).toHaveBeenCalledWith(owner, 'family-a', 'joining');
+    expect(screen.queryByText('Joining')).toBeNull();
   });
 
   it('refreshes newly arrived requests while the Primary is signed in', async () => {

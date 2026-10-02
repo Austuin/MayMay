@@ -13,6 +13,8 @@ export type FamilyMember = {
   patientIds: string[];
   requesterName: string;
   requesterEmail: string;
+  relationship?: string;
+  requestedAt?: string;
 };
 export type PendingRequest = FamilyMember & { familyName: string };
 
@@ -53,7 +55,7 @@ export async function rotateFamilyCode(connection: FirebaseConnection, familyId:
   return codeFor(familyId, secret);
 }
 
-export async function requestFamilyAccess(connection: FirebaseConnection, code: string) {
+export async function requestFamilyAccess(connection: FirebaseConnection, code: string, relationship = '') {
   const match = /^MM1\.([A-Za-z0-9_-]{1,100})\.([0-9a-f]{32})$/.exec(code.trim());
   if (!match) throw new Error('Enter the complete Family Code. Ask a Primary caregiver to copy it again if needed.');
   const [, familyId, joinSecret] = match;
@@ -65,7 +67,7 @@ export async function requestFamilyAccess(connection: FirebaseConnection, code: 
   const batch = writeBatch(connection.db);
   batch.set(ref, {
     familyId, userId: connection.user.uid, role: 'Caregiver', status: 'Pending',
-    patientIds: [], requestedAt: serverTimestamp(),
+    patientIds: [], requestedAt: serverTimestamp(), relationship: relationship.trim(),
     requesterName: connection.user.displayName?.trim() || connection.user.email || 'Caregiver',
     requesterEmail: connection.user.email ?? '', joinSecret,
   });
@@ -96,6 +98,8 @@ export async function listFamilyMembers(connection: FirebaseConnection, familyId
       patientIds: Array.isArray(value.patientIds) ? value.patientIds : [],
       requesterName: String(value.requesterName || (item.id === connection.user.uid ? connection.user.displayName || 'You' : 'Caregiver')),
       requesterEmail: String(value.requesterEmail || (item.id === connection.user.uid ? connection.user.email || '' : '')),
+      relationship: String(value.relationship || ''),
+      requestedAt: value.requestedAt?.toDate?.().toISOString(),
     };
   });
 }
@@ -159,7 +163,7 @@ export async function approveFamilyRequest(
   });
   for (const patientId of ids) {
     batch.set(accessRef(connection, familyId, patientId, userId), {
-      familyId, patientId, userId, relationship: '', canAccess: true,
+      familyId, patientId, userId, relationship: String(snapshot.data().relationship || ''), canAccess: true,
     });
   }
   await batch.commit();

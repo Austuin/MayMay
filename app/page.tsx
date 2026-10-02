@@ -54,6 +54,7 @@ import { FamilySetup } from './family-setup';
 import { FamilyAccess } from './family-access';
 import { JoinFamilyForm } from './join-family-form';
 import { PatientForm } from './patient-form';
+import { PasswordResetForm } from './password-reset-form';
 import {
   connectFirebase,
   connectFirebaseWithGoogle,
@@ -62,6 +63,7 @@ import {
   disconnectFirebase,
   loadRuntimeConfig,
   registerFirebaseAccount,
+  resetFirebasePassword,
   refreshFirebaseConnection,
   restoreFirebase,
   selectFamilyPatient,
@@ -400,6 +402,7 @@ function AccessScreen({
   onNameChange,
   onConfirmPasswordChange,
   onGoogleSignIn,
+  onResetPassword,
   onSubmit,
 }: {
   mode: 'sign-in' | 'register';
@@ -416,8 +419,10 @@ function AccessScreen({
   onNameChange: (value: string) => void;
   onConfirmPasswordChange: (value: string) => void;
   onGoogleSignIn: () => void;
+  onResetPassword: (email: string) => Promise<void>;
   onSubmit: (event: SyntheticEvent<HTMLFormElement>) => void;
 }) {
+  const [resetting, setResetting] = useState(false);
   return (
     <main className="access-shell">
       <section className="access-card" aria-labelledby="access-title">
@@ -430,17 +435,19 @@ function AccessScreen({
             <CloudOff aria-hidden="true" />
             <div><h1 id="access-title">MayMay is not available</h1><p>Ask the host computer owner to start MayMay, then refresh this page.</p></div>
           </div>
+        ) : resetting ? (
+          <PasswordResetForm initialEmail={email} onReset={onResetPassword} onBack={() => setResetting(false)} />
         ) : (
           <>
             <div className="access-mode" aria-label="Account access">
-              <button type="button" data-active={mode === 'sign-in'} onClick={() => onModeChange('sign-in')}>Sign in</button>
-              <button type="button" data-active={mode === 'register'} onClick={() => onModeChange('register')}>Create account</button>
+              <button type="button" disabled={busy} data-active={mode === 'sign-in'} onClick={() => onModeChange('sign-in')}>Sign in</button>
+              <button type="button" disabled={busy} data-active={mode === 'register'} onClick={() => onModeChange('register')}>Create account</button>
             </div>
               <>
                 <div className="access-heading">
                   <p className="eyebrow">Your care space</p>
                   <h1 id="access-title">{mode === 'register' ? 'Create your account' : 'Sign in to continue'}</h1>
-                  <p>{mode === 'register' ? 'After creating an account, you can set up a family and patient.' : 'Sign in to your MayMay account.'}</p>
+                  <p>{mode === 'register' ? 'Create your own family space or join an existing family.' : 'Sign in to your MayMay account.'}</p>
                 </div>
                 <Button variant="outline" className="google-auth-button" type="button" disabled={busy} onClick={onGoogleSignIn}>
                   <span className="google-mark" aria-hidden="true">G</span>
@@ -455,6 +462,7 @@ function AccessScreen({
                   {error && <p className="access-error" role="alert"><AlertCircle />{error}</p>}
                   <Button className="h-12 w-full text-base" type="submit" disabled={busy}>{busy ? <LoaderCircle className="animate-spin" /> : <ShieldCheck />}{busy ? (mode === 'register' ? 'Creating account…' : 'Signing in…') : (mode === 'register' ? 'Create account' : 'Sign in')}</Button>
                 </form>
+                {mode === 'sign-in' && <button type="button" disabled={busy} className="mt-3 text-sm underline" onClick={() => setResetting(true)}>Forgot password?</button>}
                 <p className="access-private"><ShieldCheck />Firebase keeps this trusted device signed in. MayMay never stores the password.</p>
               </>
           </>
@@ -669,6 +677,7 @@ export default function HomePage() {
     event.preventDefault();
     if (!runtimeConfig) return;
     if (accessMode === 'register') {
+      if (!caregiverName.trim()) { setAuthError('Enter your name.'); return; }
       if (caregiverPassword !== confirmPassword) {
         setAuthError('The passwords do not match.');
         return;
@@ -918,6 +927,7 @@ export default function HomePage() {
         onNameChange={setCaregiverName}
         onConfirmPasswordChange={setConfirmPassword}
         onGoogleSignIn={handleGoogleSignIn}
+        onResetPassword={email => resetFirebasePassword(runtimeConfig!.firebase, email)}
         onSubmit={handleSignIn}
       />
     );
@@ -959,12 +969,12 @@ export default function HomePage() {
                 }}>{request.requesterName} · {request.familyName}</button>) : <p className="text-sm text-muted-foreground">No requests right now.</p>}
               </div>
             </details>}
-            {firebaseConnection && <label className="text-xs font-medium">Family
+            {firebaseConnection && firebaseConnection.families.length > 1 && <label className="text-xs font-medium">Family
               <select className="ml-2 h-9 rounded-md border bg-background px-2 text-sm" value={firebaseConnection.profile.familyId} onChange={event => handleSelectFamilyPatient(event.target.value)}>
                 {firebaseConnection.families.map(family => <option key={family.familyId} value={family.familyId}>{family.name}</option>)}
               </select>
             </label>}
-            {selectedFamily && <label className="text-xs font-medium">Patient
+            {selectedFamily && selectedFamily.patients.length > 1 && <label className="text-xs font-medium">Patient
               <select className="ml-2 h-9 rounded-md border bg-background px-2 text-sm" value={firebaseConnection?.childId ?? ''} onChange={event => handleSelectFamilyPatient(selectedFamily.familyId, event.target.value)}>
                 {selectedFamily.patients.map(patient => <option key={patient.patientId} value={patient.patientId}>{patient.name}</option>)}
               </select>

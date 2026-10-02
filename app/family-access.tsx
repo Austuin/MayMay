@@ -35,6 +35,8 @@ function PendingRow({ connection, family, member, onAction }: {
   const [selected, setSelected] = useState<string[]>(family.patients.length === 1 ? [family.patients[0].patientId] : []);
   return <div className="space-y-3 rounded-xl border p-4">
     <div><b>{member.requesterName}</b><p className="text-sm text-muted-foreground">{member.requesterEmail || member.userId}</p></div>
+    {member.relationship && <p className="text-sm">Relationship: {member.relationship}</p>}
+    {member.requestedAt && <p className="text-sm text-muted-foreground">Requested {new Date(member.requestedAt).toLocaleDateString()}</p>}
     <label className="block text-sm font-medium">Approve as
       <select className="ml-2 h-9 rounded-md border bg-background px-2" value={role} onChange={event => setRole(event.target.value as 'Caregiver' | 'Viewer')}>
         <option value="Caregiver">Caregiver</option><option value="Viewer">Viewer</option>
@@ -152,7 +154,7 @@ export function FamilyAccess({ connection, onChanged }: {
       </div>
     </div>
     <div className="space-y-3">
-      <div className="flex items-center justify-between gap-3"><h3 className="font-semibold">Requests {pending.length ? `(${pending.length})` : ''}</h3>
+      <div className="flex items-center justify-between gap-3"><h3 className="font-semibold">Notifications {pending.length ? `(${pending.length})` : ''}</h3>
         <button className="text-sm underline disabled:opacity-50" disabled={busy} onClick={() => { void act(async () => undefined, 'Requests refreshed.'); }}>Refresh requests</button>
       </div>
       {pending.length ? pending.map(member => <PendingRow key={member.userId} connection={connection} family={family} member={member} onAction={act} />)
