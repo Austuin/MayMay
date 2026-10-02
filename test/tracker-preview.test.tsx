@@ -5,10 +5,12 @@ import {
   screen,
   within,
 } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import TrackerPreview from '@/app/tracker-preview/page';
 
+beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date(2026, 9, 7, 12)); });
 afterEach(() => {
+  vi.useRealTimers();
   cleanup();
   localStorage.clear();
   sessionStorage.clear();
@@ -22,6 +24,7 @@ function openManage() {
 describe('tracker UI preview with isolated mock data', () => {
   it('starts with three unanswered examples and keeps No distinct from Unanswered', () => {
     render(<TrackerPreview />);
+    fireEvent.change(screen.getByLabelText('Entry date'), { target: { value: '2026-10-01' } });
     expect(screen.getByText('0 of 3 answered')).toBeTruthy();
     fireEvent.change(screen.getByLabelText('Morning Mood mood'), {
       target: { value: 'Good' },
@@ -41,12 +44,12 @@ describe('tracker UI preview with isolated mock data', () => {
       within(schoolCard).getByRole('button', { name: 'Clear answer' }),
     );
     expect(screen.getByText('2 of 3 answered')).toBeTruthy();
-    fireEvent.change(screen.getByLabelText('Preview date'), {
+    fireEvent.change(screen.getByLabelText('Entry date'), {
       target: { value: '2026-10-03' },
     });
     expect(screen.getByText('0 of 2 answered')).toBeTruthy();
     expect(screen.queryByText('Went to School on Time')).toBeNull();
-    fireEvent.change(screen.getByLabelText('Preview date'), {
+    fireEvent.change(screen.getByLabelText('Entry date'), {
       target: { value: '2026-10-01' },
     });
     expect(screen.getByText('2 of 3 answered')).toBeTruthy();
@@ -54,6 +57,7 @@ describe('tracker UI preview with isolated mock data', () => {
 
   it('creates, edits, and deletes a tracker through management, with confirmation', () => {
     render(<TrackerPreview />);
+    fireEvent.change(screen.getByLabelText('Entry date'), { target: { value: '2026-10-01' } });
     openManage();
     fireEvent.click(screen.getByRole('button', { name: 'Add tracker' }));
     fireEvent.click(screen.getByRole('radio', { name: /Good event/ }));
@@ -103,6 +107,7 @@ describe('tracker UI preview with isolated mock data', () => {
 
   it('lets a caregiver delete any of the three starting examples', () => {
     render(<TrackerPreview />);
+    fireEvent.change(screen.getByLabelText('Entry date'), { target: { value: '2026-10-01' } });
     openManage();
     fireEvent.click(
       screen.getByRole('button', { name: 'Delete Morning Mood' }),
@@ -115,6 +120,7 @@ describe('tracker UI preview with isolated mock data', () => {
 
   it('shows a new tracker only on its chosen days', () => {
     render(<TrackerPreview />);
+    fireEvent.change(screen.getByLabelText('Entry date'), { target: { value: '2026-10-01' } });
     openManage();
     fireEvent.click(screen.getByRole('button', { name: 'Add tracker' }));
     fireEvent.change(screen.getByLabelText('Title'), {
@@ -129,7 +135,7 @@ describe('tracker UI preview with isolated mock data', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save tracker' }));
     fireEvent.click(screen.getByRole('button', { name: 'Back to check-in' }));
     expect(screen.getByText('Therapy Day')).toBeTruthy();
-    fireEvent.change(screen.getByLabelText('Preview date'), {
+    fireEvent.change(screen.getByLabelText('Entry date'), {
       target: { value: '2026-10-02' },
     });
     expect(screen.queryByText('Therapy Day')).toBeNull();
@@ -137,7 +143,8 @@ describe('tracker UI preview with isolated mock data', () => {
 
   it('quickly logs an unexpected event, removes it, and offers Undo', () => {
     render(<TrackerPreview />);
-    fireEvent.click(screen.getByRole('button', { name: 'Log an event' }));
+    fireEvent.change(screen.getByLabelText('Entry date'), { target: { value: '2026-10-01' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add spontaneous event' }));
     fireEvent.change(screen.getByLabelText('What happened?'), {
       target: { value: 'Loud assembly' },
     });
@@ -153,8 +160,9 @@ describe('tracker UI preview with isolated mock data', () => {
 
   it('suggests making a repeated unexpected event a regular tracker', () => {
     render(<TrackerPreview />);
+    fireEvent.change(screen.getByLabelText('Entry date'), { target: { value: '2026-10-01' } });
     for (let index = 0; index < 3; index += 1) {
-      fireEvent.click(screen.getByRole('button', { name: 'Log an event' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Add spontaneous event' }));
       fireEvent.change(screen.getByLabelText('What happened?'), {
         target: { value: 'Calm bedtime' },
       });
