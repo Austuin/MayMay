@@ -9,17 +9,20 @@ export function JoinFamilyForm({ connection, onChanged }: {
   onChanged: (connection: FirebaseConnection) => void;
 }) {
   const [code, setCode] = useState('');
+  const [relationship, setRelationship] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const requests = connection.requests ?? [];
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!relationship.trim()) { setMessage('Enter your relationship to the patient.'); return; }
     setBusy(true);
     setMessage('');
     try {
-      onChanged(await requestFamilyAccess(connection, code));
+      onChanged(await requestFamilyAccess(connection, code, relationship.trim()));
       setCode('');
+      setRelationship('');
       setMessage('Request sent. A Primary caregiver will review it.');
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Could not send your request.');
@@ -51,9 +54,12 @@ export function JoinFamilyForm({ connection, onChanged }: {
     <section className="rounded-2xl border bg-card p-6 shadow-sm">
       <h2 className="text-xl font-bold">Join a family</h2>
       <p className="mt-1 text-sm text-muted-foreground">Ask a Primary caregiver for their Family Code. Your request needs their approval before you can see any care records.</p>
-      <form className="mt-4 flex flex-wrap items-end gap-3" onSubmit={submit}>
-        <label className="min-w-0 flex-1 text-sm font-medium">Family Code
+      <form className="mt-4 space-y-3" onSubmit={submit}>
+        <label className="block text-sm font-medium">Family Code
           <input className="mt-1 h-11 w-full rounded-md border border-input bg-background px-3 text-base" value={code} onChange={event => setCode(event.target.value)} autoCapitalize="off" autoComplete="off" spellCheck={false} required />
+        </label>
+        <label className="block text-sm font-medium">Relationship
+          <input className="mt-1 h-11 w-full rounded-md border border-input bg-background px-3 text-base" placeholder="For example, parent or support worker" value={relationship} onChange={event => setRelationship(event.target.value)} required maxLength={100} />
         </label>
         <button className="h-11 rounded-md bg-primary px-5 font-medium text-primary-foreground disabled:opacity-50" disabled={busy}>{busy ? 'Sending…' : 'Request access'}</button>
       </form>
@@ -63,7 +69,7 @@ export function JoinFamilyForm({ connection, onChanged }: {
           <button type="button" className="text-sm underline disabled:opacity-50" disabled={busy} onClick={() => { void checkAccess(); }}>Check access</button>
         </div>
         {requests.map(request => <div key={request.familyId} className="flex items-center justify-between gap-3 rounded-lg border p-3 text-sm">
-          <span>Family {request.familyId.slice(0, 8)}… · {request.status === 'Pending' ? 'Waiting for approval' : request.status}</span>
+          <span>Family {request.familyId.slice(0, 8)}… · {request.status === 'Pending' ? 'Waiting for approval' : request.status === 'Rejected' ? 'Request declined. Contact a Primary caregiver before trying again.' : 'Access disabled. Contact a Primary caregiver.'}</span>
           {request.status === 'Pending' && <button type="button" className="underline disabled:opacity-50" disabled={busy} onClick={() => { void cancel(request.familyId); }}>Cancel</button>}
         </div>)}
       </div>}

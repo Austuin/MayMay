@@ -1,6 +1,8 @@
 'use client';
 
 import { useState, type FormEvent } from 'react';
+import { differenceInYears, parseISO } from 'date-fns';
+import { localDateValue } from '@/lib/maymay-types';
 import type { PatientFields } from '@/lib/maymay-firebase';
 
 const empty: PatientFields = { name: '' };
@@ -14,7 +16,7 @@ export function PatientForm({
   resetOnSave?: boolean;
 }) {
   const [name, setName] = useState(initial.name);
-  const [age, setAge] = useState(initial.age?.toString() ?? '');
+  const [supportNeeds, setSupportNeeds] = useState(initial.supportNeeds ?? '');
   const [sex, setSex] = useState(initial.sex ?? '');
   const [ethnicity, setEthnicity] = useState(initial.ethnicity ?? '');
   const [autismLevel, setAutismLevel] = useState(initial.autismLevel ?? '');
@@ -24,19 +26,20 @@ export function PatientForm({
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!name.trim()) { setError('Enter a patient name.'); return; }
     setBusy(true);
     setError('');
     try {
       await onSave({
         name: name.trim(),
-        ...(age === '' ? {} : { age: Number(age) }),
+        ...(supportNeeds.trim() ? { supportNeeds: supportNeeds.trim() } : {}),
         ...(sex ? { sex } : {}),
         ...(ethnicity.trim() ? { ethnicity: ethnicity.trim() } : {}),
         ...(autismLevel ? { autismLevel } : {}),
         ...(birthdate ? { birthdate } : {}),
       });
       if (resetOnSave) {
-        setName(''); setAge(''); setSex(''); setEthnicity(''); setAutismLevel(''); setBirthdate('');
+        setName(''); setSupportNeeds(''); setSex(''); setEthnicity(''); setAutismLevel(''); setBirthdate('');
       }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not save the patient.');
@@ -51,14 +54,14 @@ export function PatientForm({
       <label className="block text-sm font-medium">Name
         <input className={inputStyle} value={name} onChange={event => setName(event.target.value)} required maxLength={100} />
       </label>
-      <p className="text-sm text-muted-foreground">Everything below is optional. You can add or change it later.</p>
+      <details className="rounded-xl border p-4" open={Boolean(initial.birthdate || initial.sex || initial.ethnicity || initial.autismLevel || initial.supportNeeds)}>
+      <summary className="cursor-pointer font-medium">Add optional details</summary>
+      <p className="my-3 text-sm text-muted-foreground">You can add, change, or clear these later.</p>
       <div className="grid gap-4 sm:grid-cols-2">
         <label className="block text-sm font-medium">Birthdate
-          <input className={inputStyle} type="date" value={birthdate} onChange={event => setBirthdate(event.target.value)} />
+          <input className={inputStyle} type="date" max={localDateValue()} value={birthdate} onChange={event => setBirthdate(event.target.value)} />
         </label>
-        <label className="block text-sm font-medium">Age, if birthdate is unknown
-          <input className={inputStyle} type="number" min="0" max="120" step="1" value={age} onChange={event => setAge(event.target.value)} />
-        </label>
+        {birthdate && <p className="self-center text-sm text-muted-foreground">Age: {differenceInYears(new Date(), parseISO(birthdate))}</p>}
         <label className="block text-sm font-medium">Sex
           <select className={inputStyle} value={sex} onChange={event => setSex(event.target.value)}>
             <option value="">Not specified</option>
@@ -66,6 +69,7 @@ export function PatientForm({
             <option value="Male">Male</option>
             <option value="Intersex">Intersex</option>
             <option value="Unknown">Unknown</option>
+            <option value="Prefer not to say">Prefer not to say</option>
           </select>
         </label>
         <label className="block text-sm font-medium">Autism support level
@@ -81,6 +85,10 @@ export function PatientForm({
       <label className="block text-sm font-medium">Ethnicity
         <input className={inputStyle} value={ethnicity} onChange={event => setEthnicity(event.target.value)} maxLength={100} />
       </label>
+      <label className="mt-4 block text-sm font-medium">Communication and support needs
+        <textarea className="mt-1 min-h-24 w-full rounded-md border border-input bg-background p-3 text-base" value={supportNeeds} onChange={event => setSupportNeeds(event.target.value)} maxLength={1000} />
+      </label>
+      </details>
       {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
       <button className="h-11 rounded-md bg-primary px-5 font-medium text-primary-foreground disabled:opacity-50" type="submit" disabled={busy}>
         {busy ? 'Saving…' : action}

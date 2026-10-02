@@ -79,16 +79,19 @@ describe('multi-family access foundation', () => {
     expect(first.families.map(item => item.name)).toContain('First family');
     const patient = await createPatient(first, first.profile.familyId, {
       name: 'Sam', age: 8, sex: 'Female', ethnicity: 'Optional example',
-      autismLevel: 'Level 2', birthdate: '2018-01-02',
+      autismLevel: 'Level 2', birthdate: '2018-01-02', supportNeeds: 'Allow extra response time',
     });
     expect(patient.patient?.name).toBe('Sam');
     expect(patient.patient?.ethnicity).toBe('Optional example');
+    expect(patient.patient?.supportNeeds).toBe('Allow extra response time');
     const patientRef = doc(creatorDb, 'families', first.profile.familyId, 'children', patient.childId);
     expect((await getDoc(patientRef)).data()?.birthdate).toBe('2018-01-02');
     const edited = await updatePatient(patient, { name: 'Sam Updated', sex: 'Female' });
     expect(edited.patient?.name).toBe('Sam Updated');
     expect((await getDoc(patientRef)).data()?.ethnicity).toBeUndefined();
     expect((await getDoc(patientRef)).data()?.birthdate).toBeUndefined();
+    expect((await getDoc(patientRef)).data()?.supportNeeds).toBeUndefined();
+    await assertFails(updateDoc(patientRef, { supportNeeds: 123 }));
     const second = await createFamily(edited, 'Second family');
     expect(second.families).toHaveLength(2);
     expect(second.childId).toBe('');
@@ -214,9 +217,10 @@ describe('Family Code requests and Primary approval', () => {
     expect(await getFamilyCode(owner, 'maymay')).toBe(code);
     await assertFails(getDoc(doc(joining.db, 'families/maymay/joinSettings/current')));
     await assertFails(requestFamilyAccess(joining, code.slice(0, -1) + (code.endsWith('0') ? '1' : '0')));
-    const pending = await requestFamilyAccess(joining, code);
+    const pending = await requestFamilyAccess(joining, code, 'Sibling');
     expect(pending.requests).toEqual([{ familyId: 'maymay', status: 'Pending' }]);
     expect((await listPendingRequests(owner)).map(item => item.userId)).toContain('joining');
+    expect((await listPendingRequests(owner))[0].relationship).toBe('Sibling');
     await assertFails(getDoc(doc(joining.db, 'families/maymay')));
     await assertFails(getDoc(doc(joining.db, 'families/maymay/children/maymay')));
     await assertFails(updateDoc(doc(joining.db, 'families/maymay/memberships/joining'), { status: 'Active' }));
@@ -231,6 +235,7 @@ describe('Family Code requests and Primary approval', () => {
     expect(approved?.status).toBe('Active');
     expect(approved?.joinSecret).toBeUndefined();
     expect(approved?.patientIds).toEqual(['maymay']);
+    expect((await getDoc(doc(joining.db, 'families/maymay/children/maymay/access/joining'))).data()?.relationship).toBe('Sibling');
     await assertSucceeds(getDoc(doc(joining.db, 'families/maymay/children/maymay')));
     expect((await listPendingRequests(owner)).some(item => item.userId === 'joining')).toBe(false);
   });

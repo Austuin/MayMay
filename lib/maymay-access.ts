@@ -40,6 +40,7 @@ export type PatientRecord = {
   ethnicity?: string;
   autismLevel?: string;
   birthdate?: string;
+  supportNeeds?: string;
 };
 
 export type PatientAccess = {

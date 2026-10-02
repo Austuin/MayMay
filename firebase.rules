@@ -28,8 +28,10 @@ service cloud.firestore {
         && getAfter(member(f, u)).data.role == 'Primary';
     }
     function validMembership(f, u) {
-      return request.resource.data.keys().hasOnly(['familyId', 'userId', 'role', 'status', 'requestedAt', 'dateJoined', 'approvedAt', 'approvedBy', 'reviewedAt', 'reviewedBy', 'patientIds', 'requesterName', 'requesterEmail', 'joinSecret'])
+      return request.resource.data.keys().hasOnly(['familyId', 'userId', 'role', 'status', 'requestedAt', 'dateJoined', 'approvedAt', 'approvedBy', 'reviewedAt', 'reviewedBy', 'patientIds', 'requesterName', 'requesterEmail', 'joinSecret', 'relationship'])
         && request.resource.data.familyId == f && request.resource.data.userId == u
+        && request.resource.data.get('relationship', '') is string
+        && request.resource.data.get('relationship', '').size() <= 100
         && request.resource.data.role in ['Primary', 'Caregiver', 'Viewer']
         && request.resource.data.status in ['Pending', 'Active', 'Rejected', 'Disabled']
         && request.resource.data.get('patientIds', []) is list;
@@ -37,7 +39,7 @@ service cloud.firestore {
     function validJoinRequest(f, u) {
       return signedIn() && request.auth.uid == u
         && exists(family(f))
-        && request.resource.data.keys().hasOnly(['familyId', 'userId', 'role', 'status', 'requestedAt', 'patientIds', 'requesterName', 'requesterEmail', 'joinSecret'])
+        && request.resource.data.keys().hasOnly(['familyId', 'userId', 'role', 'status', 'requestedAt', 'patientIds', 'requesterName', 'requesterEmail', 'joinSecret', 'relationship'])
         && request.resource.data.role == 'Caregiver'
         && request.resource.data.status == 'Pending'
         && request.resource.data.patientIds == []
@@ -47,7 +49,7 @@ service cloud.firestore {
         && request.resource.data.joinSecret == get(joinSettings(f)).data.secret;
     }
     function validPatient(f, p) {
-      return request.resource.data.keys().hasOnly(['patientId', 'familyId', 'name', 'dateCreated', 'dateUpdated', 'age', 'sex', 'ethnicity', 'autismLevel', 'birthdate'])
+      return request.resource.data.keys().hasOnly(['patientId', 'familyId', 'name', 'dateCreated', 'dateUpdated', 'age', 'sex', 'ethnicity', 'autismLevel', 'birthdate', 'supportNeeds'])
         && request.resource.data.patientId == p
         && request.resource.data.familyId == f
         && request.resource.data.name is string
@@ -58,7 +60,9 @@ service cloud.firestore {
         && request.resource.data.get('sex', '') is string
         && request.resource.data.get('ethnicity', '') is string
         && request.resource.data.get('autismLevel', '') is string
-        && request.resource.data.get('birthdate', '') is string;
+        && request.resource.data.get('birthdate', '') is string
+        && request.resource.data.get('supportNeeds', '') is string
+        && request.resource.data.get('supportNeeds', '').size() <= 1000;
     }
     function validAccess(f, p, u) {
       return request.resource.data.keys().hasOnly(['familyId', 'patientId', 'userId', 'relationship', 'canAccess'])
@@ -141,7 +145,7 @@ service cloud.firestore {
           && getAfter(access(familyId, patientId, request.auth.uid)).data.canAccess == true;
         allow update: if primary(familyId)
           && validPatient(familyId, patientId)
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'dateUpdated', 'age', 'sex', 'ethnicity', 'autismLevel', 'birthdate']);
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'dateUpdated', 'age', 'sex', 'ethnicity', 'autismLevel', 'birthdate', 'supportNeeds']);
         allow delete: if false;
         match /access/{userId} {
           allow read: if primary(familyId) || (signedIn() && request.auth.uid == userId && active(familyId));
