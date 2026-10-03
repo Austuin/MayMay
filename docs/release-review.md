@@ -18,7 +18,7 @@ The reviewed application uses the family/user/patient model, independent Admin a
 
 ## Verification
 
-- `npm test`: 72 passing tests.
+- `npm test`: 73 passing tests.
 - `npm run test:rules`: 20 passing tests against the isolated Firestore emulator, including approval, family/patient isolation, revocation, stale writes, concurrent care edits, and Unicode requests.
 - `npm run typecheck`: passed.
 - `npm run build`: completed with exit code 0 and generated the static site.
