@@ -10,12 +10,12 @@ import { fileURLToPath } from 'node:url';
 
 import { cert, getApps, initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
-import { FieldValue, getFirestore } from 'firebase-admin/firestore';
+import { getFirestore } from 'firebase-admin/firestore';
 import multicastDns from 'multicast-dns';
+import { createInvitationHandler } from './family-invitations.mjs';
+import { activationState, existingWebApp, verifyWebConfigProject } from './host-config.mjs';
 
 const PROJECT_ID = 'maymaydata-a6fda';
-const FAMILY_ID = 'maymay';
-const CHILD_ID = 'maymay';
 const UPDATE_REPOSITORY = 'Austuin/MayMay';
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const INSTALL_ROOT = dirname(ROOT);
@@ -251,47 +251,7 @@ async function fetchRuntimeConfig(credential, projectId) {
   }
   const appsPayload = await appsResponse.json();
   const apps = Array.isArray(appsPayload.apps) ? appsPayload.apps : [];
-  let webApp =
-    apps.find((app) => app.displayName?.toLowerCase() === 'maymay' && app.state !== 'DELETED') ||
-    apps.find((app) => app.state !== 'DELETED');
-  if (!webApp?.name) {
-    console.log('No Firebase Web app found; creating MayMay…');
-    const createResponse = await fetch(
-      `https://firebase.googleapis.com/v1beta1/projects/${encodeURIComponent(projectId)}/webApps`,
-      { method: 'POST', headers, body: JSON.stringify({ displayName: 'MayMay' }) },
-    );
-    if (!createResponse.ok) {
-      throw new Error(`Firebase Web app creation failed (${createResponse.status}).`);
-    }
-    let operation = await createResponse.json();
-    for (let attempt = 0; !operation.done && attempt < 30; attempt += 1) {
-      await new Promise((resolvePromise) => setTimeout(resolvePromise, 1000));
-      const operationResponse = await fetch(
-        `https://firebase.googleapis.com/v1beta1/${operation.name}`,
-        { headers },
-      );
-      if (!operationResponse.ok) {
-        throw new Error(`Firebase Web app status check failed (${operationResponse.status}).`);
-      }
-      operation = await operationResponse.json();
-    }
-    if (operation.error) {
-      throw new Error(operation.error.message || 'Firebase Web app creation failed.');
-    }
-    if (!operation.done) {
-      throw new Error('Firebase Web app creation is still pending. Run the host again in a minute.');
-    }
-    webApp = operation.response;
-    if (!webApp?.name) {
-      const refreshedResponse = await fetch(
-        `https://firebase.googleapis.com/v1beta1/projects/${encodeURIComponent(projectId)}/webApps?pageSize=100`,
-        { headers },
-      );
-      const refreshedPayload = refreshedResponse.ok ? await refreshedResponse.json() : {};
-      webApp = refreshedPayload.apps?.find((app) => app.state !== 'DELETED');
-    }
-    if (!webApp?.name) throw new Error('Firebase created the Web app, but it is not ready yet. Run the host again.');
-  }
+  const webApp = existingWebApp(apps);
 
   const configResponse = await fetch(
     `https://firebase.googleapis.com/v1beta1/${webApp.name}/config`,
@@ -304,6 +264,7 @@ async function fetchRuntimeConfig(credential, projectId) {
   if (!firebase.apiKey || !firebase.authDomain || !firebase.projectId || !firebase.appId) {
     throw new Error('Firebase returned an incomplete Web configuration.');
   }
+  verifyWebConfigProject(firebase, projectId);
   return {
     firebase: {
       apiKey: firebase.apiKey,
@@ -313,8 +274,6 @@ async function fetchRuntimeConfig(credential, projectId) {
       ...(firebase.storageBucket ? { storageBucket: firebase.storageBucket } : {}),
       ...(firebase.messagingSenderId ? { messagingSenderId: firebase.messagingSenderId } : {}),
     },
-    familyId: FAMILY_ID,
-    childId: CHILD_ID,
   };
 }
 
@@ -325,67 +284,6 @@ async function writeRuntimeConfig(runtimeConfig) {
     mode: 0o600,
   });
   await rename(temporary, RUNTIME_FILE);
-}
-
-async function deployFirestoreRules(credential, projectId) {
-  const token = await credential.getAccessToken();
-  const headers = {
-    Authorization: `Bearer ${token.access_token}`,
-    'Content-Type': 'application/json',
-  };
-  const content = await readFile(join(ROOT, 'firebase.rules'), 'utf8');
-  const rulesetResponse = await fetch(
-    `https://firebaserules.googleapis.com/v1/projects/${encodeURIComponent(projectId)}/rulesets`,
-    {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ source: { files: [{ name: 'firestore.rules', content }] } }),
-    },
-  );
-  if (!rulesetResponse.ok) {
-    const payload = await rulesetResponse.json().catch(() => ({}));
-    throw new Error(payload.error?.message || `Firestore rules validation failed (${rulesetResponse.status}).`);
-  }
-  const ruleset = await rulesetResponse.json();
-  const releaseName = `projects/${projectId}/releases/cloud.firestore`;
-  const releaseUrl = `https://firebaserules.googleapis.com/v1/${releaseName}`;
-  const currentRelease = await fetch(releaseUrl, { headers });
-  const releaseResponse = currentRelease.status === 404
-    ? await fetch(`https://firebaserules.googleapis.com/v1/projects/${encodeURIComponent(projectId)}/releases`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ name: releaseName, rulesetName: ruleset.name }),
-      })
-    : await fetch(releaseUrl, {
-        method: 'PATCH',
-        headers,
-        body: JSON.stringify({
-          release: { name: releaseName, rulesetName: ruleset.name },
-          updateMask: 'rulesetName',
-        }),
-      });
-  if (!releaseResponse.ok) {
-    const payload = await releaseResponse.json().catch(() => ({}));
-    throw new Error(payload.error?.message || `Firestore rules release failed (${releaseResponse.status}).`);
-  }
-  return ruleset.name;
-}
-
-function runProvision(credentialsPath) {
-  return new Promise((resolvePromise, reject) => {
-    const child = spawn(
-      process.execPath,
-      [join(ROOT, 'scripts', 'provision-firestore.mjs'), '--credentials', credentialsPath],
-      { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true },
-    );
-    child.stdout.on('data', writeTerminal);
-    child.stderr.on('data', writeTerminal);
-    child.once('error', reject);
-    child.once('exit', (code) => {
-      if (code === 0) resolvePromise();
-      else reject(new Error(`Database provisioning exited with code ${code}.`));
-    });
-  });
 }
 
 const CONTENT_TYPES = {
@@ -424,6 +322,7 @@ async function staticFileFor(requestUrl) {
 function startStaticServer() {
   const server = createServer(async (request, response) => {
     try {
+      if (await handleInvitations(request, response)) return;
       const file = await staticFileFor(request.url);
       if (!file) {
         response.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
@@ -452,7 +351,16 @@ function startStaticServer() {
   return server;
 }
 
-function startDevelopmentServer() {
+async function startDevelopmentServer() {
+  // The development browser uses Vite's same-origin proxy. Admin credentials
+  // stay in this host process; the internal API port only listens on loopback.
+  const api = createServer(async (request, response) => {
+    if (!await handleInvitations(request, response)) { response.writeHead(404); response.end(); }
+  });
+  await new Promise((resolve, reject) => {
+    api.once('error', reject);
+    api.listen(0, '127.0.0.1', resolve);
+  });
   const child = spawn(
     process.execPath,
     [VINEXT_CLI, 'dev', '--hostname', '0.0.0.0'],
@@ -460,14 +368,16 @@ function startDevelopmentServer() {
       cwd: ROOT,
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
-      env: { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1' },
+      env: { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1', MAYMAY_INVITATION_API_URL: `http://127.0.0.1:${api.address().port}` },
     },
   );
   child.stdout.on('data', writeServerIssues);
   child.stderr.on('data', writeServerIssues);
   child.once('exit', (code) => {
+    api.close();
     if (code && code !== 0) console.error(`\nWeb server stopped with code ${code}.`);
   });
+  child.once('error', () => api.close());
   return child;
 }
 
@@ -506,19 +416,14 @@ function showMenu() {
     : '[ Check for updates ]';
   console.log(`  update                  ${updateLabel}`);
   console.log('  status                  Check the database and web server');
-  console.log('  users                   List Authentication users and MayMay roles');
-  console.log('  master EMAIL_OR_UID     Assign the Master role');
-  console.log('  caregiver EMAIL_OR_UID  Approve a caregiver account');
-  console.log('  viewer EMAIL_OR_UID     Assign the read-only Viewer role');
-  console.log('  disable EMAIL_OR_UID    Disable MayMay access for a profile');
-  console.log('  provision               Re-run schema and security-rule provisioning');
+  console.log('  users                   List Authentication users and family counts');
   console.log('  restart                 Restart the web server');
   console.log('  help                    Show these commands');
   console.log('  quit                    Stop MayMay\n');
 }
 
-function authUserFor(identifier) {
-  return identifier.includes('@') ? auth.getUserByEmail(identifier) : auth.getUser(identifier);
+async function activationStatus() {
+  return activationState(await db.doc('system/data').get());
 }
 
 const currentVersion = await readCurrentVersion();
@@ -534,6 +439,7 @@ const adminApp =
   initializeApp({ credential, projectId: PROJECT_ID }, 'maymay-host');
 const auth = getAuth(adminApp);
 const db = getFirestore(adminApp);
+const handleInvitations = createInvitationHandler({ db, auth });
 
 process.title = 'MayMay Host';
 if (process.stdout.isTTY) writeTerminal('\u001B[2J\u001B[H');
@@ -541,13 +447,10 @@ console.log('MayMay Host');
 console.log(`Version: ${currentVersion}${IS_INSTALLED ? '' : ' (source workspace)'}`);
 console.log(`Project: ${PROJECT_ID}`);
 console.log(`Admin key: ${basename(credentialsPath)} (host only)`);
-console.log('Preparing Firestore…');
-await runProvision(credentialsPath);
-console.log('Validating and publishing Firestore security rules…');
-await deployFirestoreRules(credential, PROJECT_ID);
 console.log('Loading Firebase Web configuration…');
 await writeRuntimeConfig(await fetchRuntimeConfig(credential, PROJECT_ID));
 console.log('Runtime configuration ready. The Admin key was not copied or served.');
+console.log(`Data activation: ${await activationStatus()}. Startup did not change Firestore data or security rules.`);
 
 let server = await startServer();
 const friendlyProxy = await startFriendlyProxy();
@@ -567,7 +470,7 @@ let handling = false;
 terminal.on('line', async (line) => {
   if (handling) return terminal.prompt();
   handling = true;
-  const [command = '', identifier = ''] = line.trim().split(/\s+/, 2);
+  const [command = ''] = line.trim().split(/\s+/, 2);
   try {
     if (command === 'update' || command === 'check-update' || command === 'install-update') {
       const wantsInstall = command === 'install-update' || (command === 'update' && pendingUpdate?.available);
@@ -635,49 +538,22 @@ terminal.on('line', async (line) => {
         }
       }
     } else if (command === 'status') {
-      const schema = await db.doc('system/schema').get();
-      console.log(`Database: ${schema.exists ? 'ready' : 'schema missing'}`);
+      console.log(`Database activation: ${await activationStatus()}`);
       console.log(`Web server: ${server.exitCode === null ? 'running' : 'stopped'}`);
       console.log(`Friendly address: http://maymay.local${friendlyPort === 80 ? '' : ':3000'}/`);
       console.log(`Version: ${currentVersion}`);
       if (pendingUpdate?.available) console.log(`Update: v${pendingUpdate.version} ready to install`);
     } else if (command === 'users') {
       const result = await auth.listUsers(1000);
-      const profiles = await db.getAll(...result.users.map((user) => db.doc(`users/${user.uid}`)));
+      const profiles = result.users.length ? await db.getAll(...result.users.map((user) => db.doc(`users/${user.uid}`))) : [];
       if (result.users.length === 0) console.log('No Authentication users found.');
       for (const [index, user] of result.users.entries()) {
         const profile = profiles[index].data();
-        console.log(`${user.email ?? '(no email)'} | ${user.uid} | ${profile?.role ?? 'unassigned'} | ${profile?.active === true ? 'active' : 'inactive'}`);
+        const families = Array.isArray(profile?.familyIds) ? profile.familyIds.length : 0;
+        console.log(`${user.email ?? '(no email)'} | ${user.uid} | ${families} ${families === 1 ? 'family' : 'families'}`);
       }
-    } else if (['master', 'caregiver', 'viewer'].includes(command)) {
-      if (!identifier) throw new Error(`Use: ${command} EMAIL_OR_UID`);
-      const user = await authUserFor(identifier);
-      const profileRef = db.doc(`users/${user.uid}`);
-      const existing = await profileRef.get();
-      await profileRef.set(
-        {
-          schemaVersion: 1,
-          familyId: FAMILY_ID,
-          role: command,
-          displayName: existing.data()?.displayName || user.displayName || user.email?.split('@')[0] || command,
-          active: true,
-          updatedAt: FieldValue.serverTimestamp(),
-          ...(!existing.exists ? { createdAt: FieldValue.serverTimestamp() } : {}),
-        },
-        { merge: true },
-      );
-      console.log(`${user.email ?? user.uid} is now an active ${command}.`);
-    } else if (command === 'disable') {
-      if (!identifier) throw new Error('Use: disable EMAIL_OR_UID');
-      const user = await authUserFor(identifier);
-      const profileRef = db.doc(`users/${user.uid}`);
-      if (!(await profileRef.get()).exists) throw new Error('That user has no MayMay profile.');
-      await profileRef.set({ active: false, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
-      console.log(`MayMay access disabled for ${user.email ?? user.uid}.`);
-    } else if (command === 'provision') {
-      await runProvision(credentialsPath);
-      await deployFirestoreRules(credential, PROJECT_ID);
-      console.log('Firestore schema and security rules are current.');
+    } else if (['master', 'caregiver', 'viewer', 'disable', 'provision'].includes(command)) {
+      console.log('This legacy host command is retired. Manage family roles and access in Settings → Family Access. Data activation uses the separate reviewed reset tool.');
     } else if (command === 'restart') {
       await stopServer(server);
       server = await startServer();

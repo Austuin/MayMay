@@ -12,6 +12,10 @@ MAYMAY OFFLINE INSTALLER
 5. Allow Node.js through Windows Firewall on Private networks only.
 6. Caregivers on the same network can open http://maymay.local/
 
+If the website shows setup or maintenance, a release operator must finish the
+separately reviewed activation procedure. Starting the host does not create
+families or patients, reset Firestore, or publish security rules.
+
 The installation itself requires no internet connection. MayMay requires an
 internet connection while running for Firebase sign-in and synchronization.
 
