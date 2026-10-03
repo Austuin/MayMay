@@ -39,13 +39,25 @@ export function validateBackupUri(value) {
   return value;
 }
 
+/** Deployment principals can inspect the release without reading executable bytecode. */
+export async function waitForRulesRelease({ readRelease, rulesetName, sleep }) {
+  for (let attempt = 0; attempt < 60; attempt++) {
+    if ((await readRelease()).rulesetName === rulesetName) {
+      await sleep(60_000);
+      return;
+    }
+    await sleep(2000);
+  }
+  throw new Error('The rules release has not become active. The reset stopped before the next phase.');
+}
+
 /**
  * @param {{ projectId: string, db: any, execute?: boolean, confirmPlan?: string,
- *   confirmProject?: string, backupUri?: string,
+ *   confirmProject?: string, backupUri?: string, backupFile?: string,
  *   operations?: { backup?: (uri: string) => Promise<void>, maintenanceRules?: () => Promise<void>, finalRules?: () => Promise<void> },
  *   report?: (plan: any) => void }} options
  */
-export async function runControlledReset({ projectId, db, execute = false, confirmPlan, confirmProject, backupUri,
+export async function runControlledReset({ projectId, db, execute = false, confirmPlan, confirmProject, backupUri, backupFile,
   operations = {}, report = (_plan) => undefined }) {
   if (!/^[a-z][a-z0-9-]{5,29}$/.test(projectId)) throw new Error('Pass an explicit Firebase project ID.');
   const inventory = await inventoryResetScope(db);
@@ -55,16 +67,18 @@ export async function runControlledReset({ projectId, db, execute = false, confi
   if (confirmProject !== projectId || confirmPlan !== planHash) {
     throw new Error('The project or inventory differs from the reviewed dry run. Stop and review a fresh plan.');
   }
-  validateBackupUri(backupUri);
+  if (Boolean(backupUri) === Boolean(backupFile)) throw new Error('Choose exactly one backup destination.');
+  if (backupUri) validateBackupUri(backupUri);
   if (!operations.backup || !operations.maintenanceRules || !operations.finalRules) throw new Error('Reset operations are incomplete.');
 
-  // No Firestore mutation occurs before the backup export finishes successfully.
-  await operations.backup(backupUri);
+  // Freeze client writes before the backup so edits to existing documents cannot
+  // fall into a gap between backup and deletion. Admin writers must be stopped.
+  await operations.maintenanceRules();
+  await operations.backup(backupFile || backupUri);
   const afterBackup = await inventoryResetScope(db);
   if (resetPlanHash(projectId, afterBackup) !== planHash) {
     throw new Error('The approved document inventory changed during backup. Review a fresh dry run before resetting.');
   }
-  await operations.maintenanceRules();
   await db.recursiveDelete(db.doc('system/data'));
   for (const path of RESET_COLLECTIONS) await db.recursiveDelete(db.collection(path));
   for (const path of RESET_DOCUMENTS.filter(path => path !== 'system/data')) await db.recursiveDelete(db.doc(path));

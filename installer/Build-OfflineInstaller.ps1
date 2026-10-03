@@ -87,6 +87,7 @@ try {
   Copy-Item -LiteralPath (Join-Path $projectRoot 'scripts\install-update.ps1') -Destination (Join-Path $payloadApp 'scripts\install-update.ps1')
   Copy-Item -LiteralPath (Join-Path $projectRoot 'scripts\reset-activate.mjs') -Destination (Join-Path $payloadApp 'scripts\reset-activate.mjs')
   Copy-Item -LiteralPath (Join-Path $projectRoot 'scripts\reset-plan.mjs') -Destination (Join-Path $payloadApp 'scripts\reset-plan.mjs')
+  Copy-Item -LiteralPath (Join-Path $projectRoot 'scripts\local-backup.mjs') -Destination (Join-Path $payloadApp 'scripts\local-backup.mjs')
   Copy-Item -LiteralPath (Join-Path $projectRoot 'firebase.rules') -Destination (Join-Path $payloadApp 'firebase.rules')
   Copy-Item -LiteralPath (Join-Path $projectRoot 'firebase.maintenance.rules') -Destination (Join-Path $payloadApp 'firebase.maintenance.rules')
   Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'runtime\package.json') -Destination (Join-Path $payloadApp 'package.json')

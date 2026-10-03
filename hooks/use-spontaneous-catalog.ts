@@ -76,12 +76,12 @@ export function useSpontaneousCatalog(connection: FirebaseConnection | null, day
     }
   }, [saveStatus, owner, loadMore]);
 
-  const keys = [...new Set(dayEvents.map(item => spontaneousRepeatKey(item.kind, item.title)))].sort().join('|');
+  const keys = JSON.stringify([...new Set(dayEvents.map(item => spontaneousRepeatKey(item.kind, item.title)))].sort());
   useEffect(() => {
-    if (!connection?.patientId || saveStatus !== 'saved' || !keys) return;
+    if (!connection?.patientId || saveStatus !== 'saved' || keys === '[]') return;
     let active = true;
     const ref = careCollection(connection.db, connection.profile.familyId, connection.patientId, 'observation');
-    void Promise.all(keys.split('|').map(async key => {
+    void Promise.all((JSON.parse(keys) as string[]).map(async key => {
       const snapshot = await getDocsFromServer(query(ref, where('repeatKey', '==', key)));
       return [key, snapshot.docs.filter(item => item.data().deletedAt == null).length] as const;
     })).then(values => {

@@ -10,9 +10,9 @@ import type { FirebaseConnection } from '../lib/maymay-firebase';
 import { createFamilyFoundation } from '../lib/maymay-access';
 import { createFamily, createPatient, selectFamilyPatient, updateAccountName, updateFamilyName, updatePatient } from '../lib/maymay-firebase';
 import {
-  approveFamilyRequest, cancelFamilyRequest, disableFamilyMember, getFamilyInvitation,
+  approveFamilyRequest, cancelFamilyRequest, changeFamilyMemberPatients, disableFamilyMember, getFamilyInvitation,
   listFamilyMembers, listPendingRequests, rejectFamilyRequest, requestFamilyAccess,
-  restoreFamilyMember, rotateFamilyCode,
+  restoreFamilyMember, rotateFamilyCode, setFamilyMemberRole, transferProtectedPrimary,
 } from '../lib/maymay-invitations';
 import { CareConflict, commitCareMutation, type CareMutation, type ObservationDraft } from '../lib/maymay-care-records';
 import { readObservationWindow } from '../lib/maymay-observation-history';
@@ -149,6 +149,7 @@ describe('multi-family access foundation', () => {
       await setDoc(doc(context.firestore(), 'families/other-family/patients/other-patient'), { familyId: 'other-family', patientId: 'other-patient', name: 'Other patient' });
       await setDoc(doc(context.firestore(), 'families/other-family/patients/other-patient/events/private'), { type: 'note', data: { text: 'Other private' } });
       await setDoc(doc(context.firestore(), 'families/maymay/patients/second'), { familyId: 'maymay', patientId: 'second', name: 'Second' });
+      await setDoc(doc(context.firestore(), 'families/maymay/patients/second/relationships/owner'), patientGrant('maymay', 'second', 'owner'));
       await setDoc(doc(context.firestore(), 'families/maymay/patients/second/events/private'), { type: 'note', data: { text: 'Second private' } });
     });
     for (const uid of ['pending', 'outsider']) {
@@ -181,10 +182,22 @@ describe('multi-family access foundation', () => {
     await env.withSecurityRulesDisabled(async context => {
       await setDoc(doc(context.firestore(), 'families/other-family/patients/other-patient'), { familyId: 'other-family', patientId: 'other-patient', name: 'Other patient' });
       await setDoc(doc(context.firestore(), 'families/other-family/patients/other-patient/events/private'), { type: 'note' });
+      await setDoc(doc(context.firestore(), 'families/other-family/patients/other-patient/relationships/other-owner'), patientGrant('other-family', 'other-patient', 'other-owner'));
     });
     await assertFails(getDoc(doc(db('alice'), 'families/other-family/patients/other-patient/events/private')));
     await assertSucceeds(setDoc(doc(db('other-owner'), 'families/other-family/patients/other-patient/relationships/alice'), patientGrant('other-family', 'other-patient', 'alice')));
     await assertSucceeds(getDoc(doc(db('alice'), 'families/other-family/patients/other-patient/events/private')));
+  });
+
+  it('prevents a Primary without patient access from editing or granting themselves access', async () => {
+    await adminDb.doc('families/maymay/patients/restricted').set({ familyId: 'maymay', patientId: 'restricted', name: 'Restricted' });
+    const primary = db('owner');
+    const ref = doc(primary, 'families/maymay/patients/restricted');
+    await assertFails(getDoc(ref));
+    await assertFails(updateDoc(ref, { name: 'Changed' }));
+    await assertFails(setDoc(doc(ref, 'relationships/owner'), patientGrant('maymay', 'restricted', 'owner')));
+    await assertFails(setDoc(doc(ref, 'relationships/alice'), patientGrant('maymay', 'restricted', 'alice')));
+    await assertFails(deleteDoc(doc(primary, 'families/maymay/memberships/alice')));
   });
 
   it('enforces approved promotions and preserves the last active Primary on the server', async () => {
@@ -214,6 +227,27 @@ describe('multi-family access foundation', () => {
 });
 
 describe('Family Code requests and Primary approval', () => {
+  it('rejects stale role changes and protected Primary transfers', async () => {
+    const owner = ownerConnection();
+    const bob = (await listFamilyMembers(owner, 'maymay')).find(item => item.userId === 'bob')!;
+    await setFamilyMemberRole(owner, 'maymay', bob, 'Primary');
+    await expect(setFamilyMemberRole(owner, 'maymay', bob, 'Viewer')).rejects.toThrow(/changed elsewhere/);
+    await transferProtectedPrimary(owner, 'maymay', 'bob');
+    await expect(transferProtectedPrimary(owner, 'maymay', 'owner')).rejects.toThrow(/changed elsewhere/);
+    expect((await adminDb.doc('families/maymay').get()).data()?.primaryId).toBe('bob');
+  });
+  it('preserves Unicode relationship text split across incoming network chunks', async () => {
+    const joining = await applicant('unicode');
+    const { code } = await rotateFamilyCode(ownerConnection(), 'maymay', ['maymay']);
+    const bytes = Buffer.from(JSON.stringify({ dataGeneration: 'test-generation', code, relationship: 'Tía 💙' }));
+    const handle = createInvitationHandler({ db: adminDb, auth: { verifyIdToken: async () => ({ uid: joining.user.uid, email: 'unicode@example.test', email_verified: true }) } });
+    let status = 0;
+    await handle({ url: '/api/family-invitations/request', method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer test' },
+      async *[Symbol.asyncIterator]() { for (const byte of bytes) yield Buffer.from([byte]); },
+    }, { writeHead: (value: number) => { status = value; }, end: () => undefined });
+    expect(status).toBe(200);
+    expect((await adminDb.doc('families/maymay/memberships/unicode').get()).data()?.relationship).toBe('Tía 💙');
+  });
   function ownerConnection() {
     return {
       app: { options: { projectId: 'demo-maymay-test' } },
@@ -359,6 +393,9 @@ describe('Family Code requests and Primary approval', () => {
     }));
     const member = (await listFamilyMembers(owner, 'maymay')).find(item => item.userId === 'viewing')!;
     await disableFamilyMember(owner, 'maymay', member);
+    await expect(changeFamilyMemberPatients(owner, 'maymay', member, ['maymay'])).rejects.toThrow(/changed elsewhere/);
+    await expect(disableFamilyMember(owner, 'maymay', member)).rejects.toThrow(/changed elsewhere/);
+    await expect(setFamilyMemberRole(owner, 'maymay', member, 'Caregiver')).rejects.toThrow(/changed elsewhere/);
     await assertFails(getDoc(doc(joining.db, 'families/maymay/patients/maymay')));
     expect((await getDoc(doc(owner.db, 'families/maymay/patients/maymay/relationships/viewing'))).exists()).toBe(false);
     await restoreFamilyMember(owner, 'maymay', { ...member, status: 'Disabled', patientIds: [] }, ['maymay']);

@@ -61,6 +61,7 @@ export class CareRecordSession {
   private loadedObservations = false;
   private locked = false;
   private error = '';
+  private draftsUnreadable = false;
   private timer?: ReturnType<typeof setTimeout>;
   private listeners: (() => void)[] = [];
 
@@ -86,6 +87,7 @@ export class CareRecordSession {
       }
       this.pending.sort((a, b) => a.queuedAt - b.queuedAt || a.id.localeCompare(b.id));
     } catch {
+      this.draftsUnreadable = true;
       this.error = 'This device could not read its saved drafts. They have been preserved; please do not clear browser storage.';
       this.emit();
       return;
@@ -93,16 +95,16 @@ export class CareRecordSession {
     this.emit();
     this.listeners.push(onSnapshot(careCollection(this.connection.db, this.connection.profile.familyId, this.connection.patientId, 'tracker'),
       { includeMetadataChanges: true }, snapshot => {
-        if (this.stopped || snapshot.metadata.fromCache || snapshot.metadata.hasPendingWrites) return;
-        this.trackers = preserveNewer(this.trackers, snapshot.docs.map(item => trackerFromDocument(item.data())), item => item.trackerId);
+        if (this.stopped || this.locked || snapshot.metadata.fromCache || snapshot.metadata.hasPendingWrites) return;
+        this.trackers = preserveNewer(this.loadedTrackers ? this.trackers : [], snapshot.docs.map(item => trackerFromDocument(item.data())), item => item.trackerId);
         this.loadedTrackers = true;
         this.cache(); this.emit(); this.schedule();
       }, error => this.fail(error)));
     this.listeners.push(onSnapshot(query(careCollection(this.connection.db, this.connection.profile.familyId, this.connection.patientId, 'observation'),
       where('localDate', '==', this.date)), { includeMetadataChanges: true }, snapshot => {
-        if (this.stopped || snapshot.metadata.fromCache || snapshot.metadata.hasPendingWrites) return;
+        if (this.stopped || this.locked || snapshot.metadata.fromCache || snapshot.metadata.hasPendingWrites) return;
         this.observations = [...this.observations.filter(item => item.localDate !== this.date),
-          ...preserveNewer(this.observations.filter(item => item.localDate === this.date),
+          ...preserveNewer(this.loadedObservations ? this.observations.filter(item => item.localDate === this.date) : [],
             snapshot.docs.map(item => observationFromDocument(item.data())), item => item.observationId)];
         this.loadedObservations = true;
         this.cache(); this.emit(); this.schedule();
@@ -116,6 +118,9 @@ export class CareRecordSession {
       this.locked = true;
       this.trackers = [];
       this.observations = [];
+      this.conflicts.clear();
+      clearTimeout(this.timer);
+      try { localStorage.removeItem(this.scope + '.cache'); } catch { /* Display remains locked. */ }
       this.error = 'Access changed. Sign in again to check access. Unsent edits are preserved.';
     } else this.error = 'Connection interrupted. Unsent edits are kept on this device.';
     this.emit();
@@ -127,7 +132,7 @@ export class CareRecordSession {
 
   private projected(): TrackerData {
     const data = emptyData();
-    if (this.locked) return data;
+    if (this.locked || !this.loadedTrackers || !this.loadedObservations) return data;
     const trackers = new Map(this.trackers.map(item => [item.trackerId, item]));
     const observations = new Map(this.observations.map(item => [item.observationId, item]));
     for (const mutation of this.pending) {
@@ -182,7 +187,7 @@ export class CareRecordSession {
   }
 
   edit(change: (current: TrackerData) => TrackerData) {
-    if (this.stopped || this.locked || this.error || !['master', 'caregiver'].includes(this.connection.profile.role)) return;
+    if (this.stopped || this.locked || this.error || !this.loadedTrackers || !this.loadedObservations || !['master', 'caregiver'].includes(this.connection.profile.role)) return;
     const before = this.projected();
     const after = change(before);
     const edits: { target: CareMutation['target']; id: string; value: CareMutation['after'] }[] = [];
@@ -231,32 +236,33 @@ export class CareRecordSession {
       // Keep already persisted mutations; never show an unpersisted edit as saved.
       this.error = 'This device could not keep the latest edit. Free browser storage and enter it again.';
     }
-    if (saved.length) { this.emit(); this.schedule(); }
+    this.emit();
+    if (saved.length) this.schedule();
   }
 
   private schedule(delay = 350) {
-    if (this.stopped || this.locked || (this.error && this.error !== 'Pending connection. Your edits remain on this device.')
+    if (this.stopped || this.locked || !this.loadedTrackers || !this.loadedObservations || (this.error && this.error !== 'Pending connection. Your edits remain on this device.')
       || !this.pending.length || this.connection.profile.role === 'viewer') return;
     clearTimeout(this.timer);
     this.timer = setTimeout(() => { void this.flush(); }, delay);
   }
-  retry() { if (this.locked) return; this.error = ''; this.schedule(0); this.emit(); }
+  retry() { if (this.locked || this.draftsUnreadable) return; this.error = ''; this.schedule(0); this.emit(); }
 
   private async flush() {
-    if (this.flushing || this.stopped || (this.error && this.error !== 'Pending connection. Your edits remain on this device.')) return;
+    if (this.flushing || this.stopped || this.locked || !this.loadedTrackers || !this.loadedObservations || (this.error && this.error !== 'Pending connection. Your edits remain on this device.')) return;
     if (this.error) this.error = '';
     this.flushing = true; this.emit();
     try {
-      while (!this.stopped) {
+      while (!this.stopped && !this.locked) {
         const mutation = this.pending.find(item => !this.conflicts.has(`${item.target}:${item.recordId}`));
         if (!mutation) break;
         try {
           const result = await commitCareMutation(this.connection, mutation);
           localStorage.removeItem(this.scope + '.pending.' + mutation.id);
           this.pending = this.pending.filter(item => item.id !== mutation.id);
-          if (this.stopped) return;
-          if (mutation.target === 'tracker') this.trackers = [...this.trackers.filter(item => item.trackerId !== mutation.recordId), result as TrackerRecord];
-          else this.observations = [...this.observations.filter(item => item.observationId !== mutation.recordId), result as ObservationRecord];
+          if (this.stopped || this.locked) return;
+          if (mutation.target === 'tracker') this.trackers = preserveNewer(this.trackers, [result as TrackerRecord], item => item.trackerId);
+          else this.observations = preserveNewer(this.observations, [result as ObservationRecord], item => item.observationId);
           this.cache();
         } catch (error) {
           if (this.stopped) return;
@@ -282,7 +288,7 @@ export class CareRecordSession {
   choose(recordId: string, target: CareMutation['target'], useMine: boolean) {
     const key = `${target}:${recordId}`;
     const conflict = this.conflicts.get(key);
-    if (!conflict) return;
+    if (!conflict || this.stopped || this.locked) return;
     const edits = this.pending.filter(item => item.target === target && item.recordId === recordId);
     try {
       if (useMine && edits.length) {

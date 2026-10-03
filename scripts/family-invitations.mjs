@@ -142,7 +142,9 @@ export function createInvitationService(db, now = () => Date.now()) {
 export function createInvitationHandler({ db, auth }) {
   const execute = createInvitationService(db);
   return async function handle(request, response) {
-    const pathname = new URL(request.url, 'http://localhost').pathname;
+    let pathname;
+    try { pathname = new URL(request.url, 'http://localhost').pathname; }
+    catch { response.writeHead(400); response.end('Invalid request URL.'); return true; }
     if (!pathname.startsWith('/api/family-invitations/')) return false;
     const reply = (status, body) => {
       response.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
@@ -156,13 +158,16 @@ export function createInvitationHandler({ db, auth }) {
       let actor;
       try { actor = await auth.verifyIdToken(token, true); }
       catch { fail('Your sign-in expired. Sign in again.', 401); }
-      let body = '';
+      const chunks = [];
+      let bytes = 0;
       for await (const chunk of request) {
-        body += chunk.toString();
-        if (Buffer.byteLength(body) > 8192) fail('The request is too large.', 413);
+        const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        bytes += buffer.length;
+        if (bytes > 8192) fail('The request is too large.', 413);
+        chunks.push(buffer);
       }
       let input;
-      try { input = JSON.parse(body); } catch { fail('Invalid request.'); }
+      try { input = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { fail('Invalid request.'); }
       if (!input || typeof input !== 'object' || Array.isArray(input)) fail('Invalid request.');
       reply(200, await execute(pathname.slice('/api/family-invitations/'.length), actor, input));
     } catch (error) {

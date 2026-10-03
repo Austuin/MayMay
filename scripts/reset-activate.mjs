@@ -3,7 +3,8 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { cert, initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
-import { runControlledReset } from './reset-plan.mjs';
+import { runControlledReset, waitForRulesRelease } from './reset-plan.mjs';
+import { validateBackupFile, writeLocalBackup } from './local-backup.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const sleep = ms => new Promise(resolvePromise => setTimeout(resolvePromise, ms));
@@ -20,7 +21,7 @@ function argsFor(values) {
       flags.set(flag, value);
     }
   }
-  const allowed = ['--project', '--credentials', '--execute', '--dry-run', '--confirm-project', '--confirm-plan', '--backup-uri'];
+  const allowed = ['--project', '--credentials', '--execute', '--dry-run', '--confirm-project', '--confirm-plan', '--backup-uri', '--backup-file'];
   for (const flag of flags.keys()) if (!allowed.includes(flag)) throw new Error(`Unknown option: ${flag}`);
   if (flags.has('--execute') && flags.has('--dry-run')) throw new Error('Choose --dry-run or --execute.');
   if (!flags.get('--project') || !flags.get('--credentials')) {
@@ -79,15 +80,9 @@ async function installRules(credential, projectId, fileName) {
   await firebaseRequest(credential, path, releaseResponse.status === 404
     ? { method: 'POST', body: { name: releaseName, rulesetName: ruleset.name } }
     : { method: 'PATCH', body: { release: { name: releaseName, rulesetName: ruleset.name }, updateMask: 'rulesetName' } });
-  // A release update can precede rule enforcement. Do not advance the reset
-  // until Firestore reports the intended executable ruleset.
-  for (let attempt = 0; attempt < 60; attempt++) {
-    const executable = await firebaseRequest(credential,
-      `firebaserules.googleapis.com/v1/${releaseName}:getExecutable`);
-    if (executable.rulesetName === ruleset.name) return;
-    await sleep(2000);
-  }
-  throw new Error(`${fileName} has not become active. The reset stopped before the next phase.`);
+  console.log('Verifying the published release and waiting for rule propagation (60 seconds)…');
+  await waitForRulesRelease({ rulesetName: ruleset.name, sleep,
+    readRelease: () => firebaseRequest(credential, `firebaserules.googleapis.com/v1/${releaseName}`) });
 }
 
 async function main() {
@@ -100,11 +95,24 @@ async function main() {
   const app = initializeApp({ credential, projectId }, 'maymay-reset-tool');
   const db = getFirestore(app);
   const execute = Boolean(flags.get('--execute'));
+  const backupFile = flags.has('--backup-file') ? validateBackupFile(flags.get('--backup-file'), ROOT) : undefined;
+  if (execute) {
+    // Compile both rule sets before entering maintenance or deleting anything.
+    for (const fileName of ['firebase.maintenance.rules', 'firebase.rules']) {
+      await firebaseRequest(credential, `firebaserules.googleapis.com/v1/projects/${projectId}/rulesets`,
+        { method: 'POST', body: { source: { files: [{ name: 'firestore.rules', content: await readFile(join(ROOT, fileName), 'utf8') }] } } });
+    }
+  }
   const result = await runControlledReset({ projectId, db, execute,
     confirmProject: flags.get('--confirm-project'), confirmPlan: flags.get('--confirm-plan'),
-    backupUri: flags.get('--backup-uri'),
+    backupUri: flags.get('--backup-uri'), backupFile,
     operations: {
-      backup: uri => backupFirestore(credential, projectId, uri),
+      backup: async destination => {
+        if (!backupFile) return backupFirestore(credential, projectId, destination);
+        const result = await writeLocalBackup({ projectId, db, path: backupFile,
+          request: (path, options) => firebaseRequest(credential, path, options) });
+        console.log(`Verified local backup: ${result.documentCount} documents; SHA-256 ${result.checksum}`);
+      },
       maintenanceRules: () => installRules(credential, projectId, 'firebase.maintenance.rules'),
       finalRules: () => installRules(credential, projectId, 'firebase.rules'),
     },

@@ -131,8 +131,8 @@ service cloud.firestore {
             || resource.data.role == 'Primary' || resource.data.status == 'Active')
           && (getAfter(family(familyId)).data.primaryId != userId
             || (request.resource.data.role == 'Primary' && request.resource.data.status == 'Active'));
-        allow delete: if primary(familyId) && resource.data.status in ['Active', 'Disabled']
-          && getAfter(family(familyId)).data.primaryId != userId;
+        // Membership removal uses trusted request cancellation or disables access.
+        allow delete: if false;
       }
       // Only the host API may issue invitations or create/review/cancel join requests.
       match /invitations/{inviteId} {
@@ -143,13 +143,15 @@ service cloud.firestore {
         allow read: if permitted(familyId, patientId);
         allow create: if primary(familyId) && validPatient(familyId, patientId)
           && getAfter(access(familyId, patientId, request.auth.uid)).data.canAccess == true;
-        allow update: if primary(familyId)
+        allow update: if primary(familyId) && permitted(familyId, patientId)
           && validPatient(familyId, patientId)
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'dateUpdated', 'sex', 'ethnicity', 'autismLevel', 'birthdate', 'supportNeeds']);
         allow delete: if false;
         match /relationships/{userId} {
           allow read: if primary(familyId) || (signedIn() && request.auth.uid == userId && active(familyId));
           allow create, update: if primary(familyId) && validAccess(familyId, patientId, userId)
+            && (permitted(familyId, patientId)
+              || (!exists(patient(familyId, patientId)) && userId == request.auth.uid))
             && existsAfter(patient(familyId, patientId))
             && exists(member(familyId, userId))
             && (request.resource.data.canAccess == false
@@ -204,6 +206,8 @@ service cloud.firestore {
               && request.resource.data.keys().hasOnly(['revision', 'createdBy', 'createdAt'])
               && request.resource.data.createdBy == request.auth.uid
               && request.resource.data.createdAt == request.time
+              && getAfter(/databases/$(database)/documents/families/$(familyId)/patients/$(patientId)/trackers/$(trackerId)).data.updatedBy == request.auth.uid
+              && getAfter(/databases/$(database)/documents/families/$(familyId)/patients/$(patientId)/trackers/$(trackerId)).data.updatedAt == request.time
               && request.resource.data.revision is int
               && getAfter(/databases/$(database)/documents/families/$(familyId)/patients/$(patientId)/trackers/$(trackerId)).data.mutationId == mutationId
               && getAfter(/databases/$(database)/documents/families/$(familyId)/patients/$(patientId)/trackers/$(trackerId)).data.revision == request.resource.data.revision;
@@ -264,6 +268,8 @@ service cloud.firestore {
               && request.resource.data.keys().hasOnly(['revision', 'createdBy', 'createdAt'])
               && request.resource.data.createdBy == request.auth.uid
               && request.resource.data.createdAt == request.time
+              && getAfter(/databases/$(database)/documents/families/$(familyId)/patients/$(patientId)/observations/$(observationId)).data.updatedBy == request.auth.uid
+              && getAfter(/databases/$(database)/documents/families/$(familyId)/patients/$(patientId)/observations/$(observationId)).data.updatedAt == request.time
               && request.resource.data.revision is int
               && getAfter(/databases/$(database)/documents/families/$(familyId)/patients/$(patientId)/observations/$(observationId)).data.mutationId == mutationId
               && getAfter(/databases/$(database)/documents/families/$(familyId)/patients/$(patientId)/observations/$(observationId)).data.revision == request.resource.data.revision;

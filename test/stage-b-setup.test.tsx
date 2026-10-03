@@ -43,6 +43,7 @@ const mocks = vi.hoisted(() => {
 });
 
 vi.mock('@/lib/maymay-firebase', () => ({
+  watchFirebaseAccess: () => () => undefined,
   loadRuntimeConfig: vi.fn(async () => ({ firebase: { apiKey: 'test', authDomain: 'test', projectId: 'demo-test', appId: 'test' } })),
   restoreFirebase: mocks.restoreFirebase,
   createFamily: mocks.createFamily,

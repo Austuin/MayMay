@@ -4,15 +4,18 @@ import { CareRecordSession, careScope, type CareView } from '../lib/maymay-care-
 
 const fake = vi.hoisted(() => ({
   records: new Map<string, Record<string, unknown>>(), stops: [] as ReturnType<typeof vi.fn>[],
-  commits: [] as string[],
+  commits: [] as string[], hold: false,
+  callbacks: [] as { send: () => void; fail: (error: Error) => void }[],
 }));
 vi.mock('firebase/firestore', () => ({
   where: (_field: string, _operator: string, value: string) => ({ date: value }),
   query: (ref: { target: string }, filter: { date: string }) => ({ ...ref, ...filter }),
-  onSnapshot: (ref: { target: string; date?: string }, _options: unknown, receive: (snapshot: unknown) => void) => {
-    receive({ metadata: { fromCache: false, hasPendingWrites: false }, docs: [...fake.records.values()]
+  onSnapshot: (ref: { target: string; date?: string }, _options: unknown, receive: (snapshot: unknown) => void, fail: (error: Error) => void) => {
+    const send = () => receive({ metadata: { fromCache: false, hasPendingWrites: false }, docs: [...fake.records.values()]
       .filter(item => ref.target === 'tracker' ? item.trackerId : item.observationId && item.localDate === ref.date)
       .map(item => ({ data: () => item })) });
+    fake.callbacks.push({ send, fail });
+    if (!fake.hold) send();
     const stop = vi.fn(); fake.stops.push(stop); return stop;
   },
 }));
@@ -38,13 +41,51 @@ const connection = { app: { options: { projectId: 'demo-test' } }, db: {},
 const date = '2026-10-03';
 
 beforeEach(() => {
-  vi.useFakeTimers(); localStorage.clear(); fake.records.clear(); fake.stops.length = 0; fake.commits.length = 0;
+  vi.useFakeTimers(); localStorage.clear(); fake.records.clear(); fake.stops.length = 0; fake.commits.length = 0; fake.hold = false; fake.callbacks.length = 0;
   fake.records.set('school', { trackerId: 'school', title: 'School on time', description: 'Did they arrive on time?',
     kind: 'good', days: [0, 1, 2, 3, 4, 5, 6], revision: 1, deletedAt: null });
 });
 afterEach(() => { vi.useRealTimers(); localStorage.clear(); });
 
 describe('durable patient-scoped care drafts', () => {
+  it('withholds cached records and drafts until both server access checks finish, then clears on revocation', async () => {
+    let view: CareView | undefined;
+    const seed = new CareRecordSession(connection, date, next => { view = next; });
+    seed.start();
+    seed.edit(current => ({ ...current, answers: { [date]: { school: true } } }));
+    seed.dispose();
+    fake.hold = true; fake.callbacks.length = 0;
+    const session = new CareRecordSession(connection, date, next => { view = next; });
+    session.start();
+    expect(view?.data.trackers).toEqual([]);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(fake.commits).toEqual([]);
+    fake.callbacks[0].send();
+    expect(view?.data.trackers).toEqual([]);
+    fake.callbacks[1].send();
+    expect(view?.data.answers[date].school).toBe(true);
+    fake.callbacks[0].fail(Object.assign(new Error('Denied'), { code: 'permission-denied' }));
+    expect(view?.data.trackers).toEqual([]);
+    expect(localStorage.getItem(careScope(connection) + '.cache')).toBeNull();
+    fake.callbacks[1].send();
+    expect(localStorage.getItem(careScope(connection) + '.cache')).toBeNull();
+    await vi.advanceTimersByTimeAsync(500);
+    expect(fake.commits).toEqual([]);
+    session.dispose();
+  });
+
+  it('reports storage failure without pretending the edit was saved', () => {
+    let view: CareView | undefined;
+    const session = new CareRecordSession(connection, date, next => { view = next; });
+    session.start();
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('Full'); });
+    session.edit(current => ({ ...current, answers: { [date]: { school: true } } }));
+    expect(view?.status).toBe('error');
+    expect(view?.message).toMatch(/could not keep/);
+    expect(view?.data.answers[date]).toBeUndefined();
+    session.dispose();
+  });
+
   it('projects the original snapshot of an answer after its tracker is deleted', async () => {
     fake.records.set('school', { ...fake.records.get('school'), title: 'Renamed later', deletedAt: 'deleted' });
     fake.records.set(`school_${date}`, { observationId: `school_${date}`, localDate: date, kind: 'answer',

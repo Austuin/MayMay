@@ -1,6 +1,6 @@
 import {
   collection, doc, getDocs,
-  onSnapshot, query, updateDoc, where, writeBatch,
+  onSnapshot, query, where, runTransaction,
 } from 'firebase/firestore';
 import { refreshFirebaseConnection, type FirebaseConnection, type FamilyOption } from './maymay-firebase';
 import { reload, sendEmailVerification } from 'firebase/auth';
@@ -161,15 +161,30 @@ export async function rejectFamilyRequest(connection: FirebaseConnection, family
   await invitationRequest(connection, 'reject', { familyId, userId });
 }
 
-export async function setFamilyMemberRole(connection: FirebaseConnection, familyId: string, userId: string, role: FamilyRole) {
+export async function setFamilyMemberRole(connection: FirebaseConnection, familyId: string, member: FamilyMember, role: FamilyRole) {
   requirePrimary(connection, familyId);
-  if (userId === connection.user.uid) throw new Error('Another Primary must change your role.');
-  await updateDoc(membershipRef(connection, familyId, userId), { role });
+  if (member.userId === connection.user.uid) throw new Error('Another Primary must change your role.');
+  await runTransaction(connection.db, async tx => {
+    const ref = membershipRef(connection, familyId, member.userId);
+    unchangedMember((await tx.get(ref)).data(), member);
+    tx.update(ref, { role });
+  });
 }
 
 export async function transferProtectedPrimary(connection: FirebaseConnection, familyId: string, userId: string) {
-  requirePrimary(connection, familyId);
-  await updateDoc(doc(connection.db, 'families', familyId), { primaryId: userId });
+  const family = requirePrimary(connection, familyId);
+  await runTransaction(connection.db, async tx => {
+    const ref = doc(connection.db, 'families', familyId);
+    if ((await tx.get(ref)).data()?.primaryId !== family.primaryId) throw new Error('The protected Primary changed elsewhere. Refresh before transferring.');
+    tx.update(ref, { primaryId: userId });
+  });
+}
+
+function unchangedMember(current: Record<string, unknown> | undefined, expected: FamilyMember) {
+  const ids = (value: unknown) => JSON.stringify(Array.isArray(value) ? [...value].sort() : []);
+  if (!current || current.status !== expected.status || current.role !== expected.role || ids(current.patientIds) !== ids(expected.patientIds)) {
+    throw new Error('This caregiver changed elsewhere. Refresh the list before saving.');
+  }
 }
 
 export async function changeFamilyMemberPatients(connection: FirebaseConnection, familyId: string, member: FamilyMember, selectedIds: string[]) {
@@ -178,42 +193,44 @@ export async function changeFamilyMemberPatients(connection: FirebaseConnection,
   if (member.status !== 'Active') throw new Error('Only active members can be assigned patients.');
   const selected = selectedPatients(family, selectedIds);
   const visible = new Set(family.patients.map(patient => patient.patientId));
-  const preserved = member.patientIds.filter(id => !visible.has(id));
-  const nextIds = [...new Set([...preserved, ...selected])];
-  const batch = writeBatch(connection.db);
-  batch.update(membershipRef(connection, familyId, member.userId), { patientIds: nextIds });
-  for (const patientId of selected.filter(id => !member.patientIds.includes(id))) {
-    batch.set(accessRef(connection, familyId, patientId, member.userId), {
-      familyId, patientId, userId: member.userId, relationship: '', canAccess: true,
-    });
-  }
-  for (const patientId of member.patientIds.filter(id => visible.has(id) && !selected.includes(id))) {
-    batch.delete(accessRef(connection, familyId, patientId, member.userId));
-  }
-  await batch.commit();
+  await runTransaction(connection.db, async tx => {
+    const ref = membershipRef(connection, familyId, member.userId);
+    const snapshot = await tx.get(ref);
+    unchangedMember(snapshot.data(), member);
+    const preserved = member.patientIds.filter(id => !visible.has(id));
+    tx.update(ref, { patientIds: [...new Set([...preserved, ...selected])] });
+    for (const patientId of selected.filter(id => !member.patientIds.includes(id))) {
+      tx.set(accessRef(connection, familyId, patientId, member.userId), {
+        familyId, patientId, userId: member.userId, relationship: member.relationship ?? '', canAccess: true,
+      });
+    }
+    for (const patientId of member.patientIds.filter(id => visible.has(id) && !selected.includes(id))) {
+      tx.delete(accessRef(connection, familyId, patientId, member.userId));
+    }
+  });
 }
 
 export async function disableFamilyMember(connection: FirebaseConnection, familyId: string, member: FamilyMember) {
   requirePrimary(connection, familyId);
   if (member.userId === connection.user.uid) throw new Error('Another Primary must disable your access.');
-  const batch = writeBatch(connection.db);
-  batch.update(membershipRef(connection, familyId, member.userId), { status: 'Disabled', patientIds: [] });
-  for (const patientId of member.patientIds) {
-    batch.delete(accessRef(connection, familyId, patientId, member.userId));
-  }
-  await batch.commit();
+  await runTransaction(connection.db, async tx => {
+    const ref = membershipRef(connection, familyId, member.userId);
+    unchangedMember((await tx.get(ref)).data(), member);
+    tx.update(ref, { status: 'Disabled', patientIds: [] });
+    for (const patientId of member.patientIds) tx.delete(accessRef(connection, familyId, patientId, member.userId));
+  });
 }
 
 export async function restoreFamilyMember(connection: FirebaseConnection, familyId: string, member: FamilyMember, patientIds: string[]) {
   const family = requirePrimary(connection, familyId);
   if (member.status !== 'Disabled') throw new Error('That member is not disabled.');
   const ids = selectedPatients(family, patientIds, true);
-  const batch = writeBatch(connection.db);
-  batch.update(membershipRef(connection, familyId, member.userId), { status: 'Active', patientIds: ids });
-  for (const patientId of ids) {
-    batch.set(accessRef(connection, familyId, patientId, member.userId), {
-      familyId, patientId, userId: member.userId, relationship: '', canAccess: true,
+  await runTransaction(connection.db, async tx => {
+    const ref = membershipRef(connection, familyId, member.userId);
+    unchangedMember((await tx.get(ref)).data(), member);
+    tx.update(ref, { status: 'Active', patientIds: ids });
+    for (const patientId of ids) tx.set(accessRef(connection, familyId, patientId, member.userId), {
+      familyId, patientId, userId: member.userId, relationship: member.relationship ?? '', canAccess: true,
     });
-  }
-  await batch.commit();
+  });
 }

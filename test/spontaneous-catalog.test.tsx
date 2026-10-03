@@ -39,6 +39,15 @@ beforeEach(() => { fake.documents.clear(); fake.paths.length = 0; });
 afterEach(() => cleanup());
 
 describe('spontaneous event catalog', () => {
+  it('counts a title containing a pipe as one event key', async () => {
+    const title = 'School | calm arrival';
+    const repeatKey = spontaneousRepeatKey('good', title);
+    fake.documents.set(path('patient-a'), [{ ...occurrence('one'), title, repeatKey }]);
+    const selected = connection('patient-a');
+    const { result } = renderHook(() => useSpontaneousCatalog(selected,
+      [{ id: 'one', date: '2026-10-03', kind: 'good', title, note: '', time: '09:00' }], 'saved'));
+    await waitFor(() => expect(result.current.counts[repeatKey]).toBe(1));
+  });
   it('counts only nondeleted matching occurrences in one patient and refreshes after a save', async () => {
     fake.documents.set(path('patient-a'), [occurrence('one'), occurrence('two'), occurrence('three'), occurrence('deleted', 'yesterday')]);
     const event = { id: 'today', date: '2026-10-03', kind: 'good' as const,

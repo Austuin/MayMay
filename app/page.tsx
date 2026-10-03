@@ -1,4 +1,5 @@
 'use client';
+import { describeCareVersion } from '@/lib/maymay-conflict';
 
 import { useEffect, useRef, useState, type SyntheticEvent } from 'react';
 import {
@@ -44,6 +45,7 @@ import {
   updatePatient,
   updateAccountName,
   updateFamilyName,
+  watchFirebaseAccess,
   type FirebaseConnection,
   type MayMayRuntimeConfig,
   type PatientFields,
@@ -181,6 +183,16 @@ export default function HomePage() {
   const currentRole = firebaseConnection?.profile.role;
   const isMaster = currentRole === 'master';
   const selectedFamily = firebaseConnection?.families.find(item => item.familyId === firebaseConnection.profile.familyId);
+  useEffect(() => {
+    if (!firebaseConnection) return;
+    return watchFirebaseAccess(firebaseConnection, message => {
+      connectionRef.current = null;
+      setFirebaseConnection(null);
+      setPendingRequests([]);
+      setAuthError(message);
+      setSyncState('signed-out');
+    });
+  }, [firebaseConnection]);
   useEffect(() => {
     if (!firebaseConnection || !firebaseConnection.families.some(family => family.role === 'Primary')) {
       queueMicrotask(() => setPendingRequests([]));
@@ -580,8 +592,8 @@ export default function HomePage() {
           {careRecords.conflicts.map(conflict => <section key={`${conflict.target}:${conflict.recordId}`} className="mx-auto mt-4 max-w-3xl rounded-xl border border-amber-300 bg-card p-4">
             <h2 className="font-semibold">Another caregiver changed this record</h2>
             <div className="mt-3 grid gap-3 sm:grid-cols-2">
-              <div><b>Saved version</b><pre className="mt-1 whitespace-pre-wrap text-sm">{JSON.stringify(conflict.remote, null, 2)}</pre></div>
-              <div><b>Your edit</b><pre className="mt-1 whitespace-pre-wrap text-sm">{JSON.stringify(conflict.local, null, 2)}</pre></div>
+              <div><b>Saved version</b><p className="mt-1 whitespace-pre-wrap text-sm">{describeCareVersion(conflict.remote)}</p></div>
+              <div><b>Your edit</b><p className="mt-1 whitespace-pre-wrap text-sm">{describeCareVersion(conflict.local)}</p></div>
             </div>
             <div className="mt-3 flex flex-wrap gap-2">
               <Button variant="outline" onClick={() => careRecords.choose(conflict.recordId, conflict.target, false)}>Use saved version</Button>

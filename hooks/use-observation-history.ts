@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FirebaseConnection } from '@/lib/maymay-firebase';
 import type { ObservationRecord } from '@/lib/maymay-schema';
 import { historyCutoffDate } from '@/lib/maymay-types';
@@ -10,6 +10,8 @@ const empty: HistoryState = { scope: '', windows: [], observations: [], loading:
 export function useObservationHistory(connection: FirebaseConnection | null, activeTab: string) {
   const scope = connection?.patientId ? [connection.app.options.projectId, connection.dataGeneration, connection.user.uid,
     connection.profile.familyId, connection.patientId].join('|') : '';
+  const currentScope = useRef(scope);
+  currentScope.current = scope;
   const [state, setState] = useState<HistoryState>(empty);
   const [refreshNumber, setRefreshNumber] = useState(0);
   const visible = state.scope === scope ? state : empty;
@@ -20,7 +22,7 @@ export function useObservationHistory(connection: FirebaseConnection | null, act
     let alive = true;
     const windows = state.scope === scope && state.windows.length ? state.windows : [nextHistoryWindow()!];
     queueMicrotask(() => { if (alive) setState(previous => ({
-      ...(previous.scope === scope ? previous : { ...empty, scope }), loading: true, error: '',
+      ...empty, scope, windows, loading: true, error: '',
     })); });
     void Promise.all(windows.map(async window => ({ window, observations: await readObservationWindow(connection, window) })))
       .then(results => { if (!alive) return; setState(previous => {
@@ -28,12 +30,12 @@ export function useObservationHistory(connection: FirebaseConnection | null, act
         for (const result of results) observations = replaceObservationWindow(observations, result.observations, result.window);
         return { scope, windows, observations, loading: false, error: '' };
       }); })
-      .catch(error => { if (alive) setState(previous => ({ ...previous, scope, loading: false,
-        error: error instanceof Error ? error.message : 'Could not load recorded days.' })); });
+      .catch(error => { if (alive) setState({ ...empty, scope, loading: false,
+        error: error instanceof Error ? error.message : 'Could not load recorded days.' }); });
     return () => { alive = false; };
   // Refresh when entering History or Insights, changing patient, or requesting a reload.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, activeTab, scope, refreshNumber]);
+  }, [active, activeTab, scope, refreshNumber, connection]);
 
   const loadMore = useCallback(async () => {
     if (!connection || !scope || visible.loading) return;
@@ -42,10 +44,12 @@ export function useObservationHistory(connection: FirebaseConnection | null, act
     setState(previous => ({ ...previous, loading: true, error: '' }));
     try {
       const records = await readObservationWindow(connection, window);
+      if (currentScope.current !== scope) return;
       setState(previous => previous.scope !== scope ? previous : { ...previous, windows: [...previous.windows, window],
         observations: replaceObservationWindow(previous.observations, records, window), loading: false });
     } catch (error) {
-      setState(previous => previous.scope !== scope ? previous : { ...previous, loading: false,
+      if (currentScope.current !== scope) return;
+      setState(previous => previous.scope !== scope ? previous : { ...empty, scope, loading: false,
         error: error instanceof Error ? error.message : 'Could not load older days.' });
     }
   }, [connection, scope, visible.loading, visible.windows]);
