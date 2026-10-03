@@ -503,7 +503,8 @@ describe('tracker and observation saves with real Firestore rules', () => {
     expect((await getDoc(doc(connection('alice').db, path))).data()).toMatchObject({
       value: true, revision: 2, trackerSnapshot: { title: 'School on time', kind: 'good' },
     });
-    await assertFails(commitCareMutation(connection('viewer', 'maymay', 'viewer'), answer('viewer', false, 2)));
+    await expect(commitCareMutation(connection('viewer', 'maymay', 'viewer'), answer('viewer', false, 2))).rejects.toThrow(/cannot change/);
+    await assertFails(updateDoc(doc(connection('viewer').db, path), { value: false }));
     await assertFails(commitCareMutation(connection('pending'), answer('pending', false, 2)));
     await assertFails(getDoc(doc(connection('outsider').db, path)));
     await commitCareMutation(connection('bob'), answer('bob', null, 2));
