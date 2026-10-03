@@ -69,7 +69,7 @@ function MemberRow({ connection, family, member, onAction }: {
   return <div className="space-y-3 rounded-xl border p-4">
     <div className="flex flex-wrap items-center justify-between gap-2">
       <div><b>{member.requesterName}{self ? ' (you)' : ''}</b><p className="text-sm text-muted-foreground">{member.requesterEmail || member.userId}</p></div>
-      <span className="text-sm">{member.status === 'Disabled' ? 'Disabled' : designated ? 'Protected Primary' : member.role}</span>
+      <span className="text-sm">{member.status === 'Disabled' ? 'Access revoked' : designated ? 'Protected Primary' : member.role}</span>
     </div>
     {!self && member.status === 'Active' && <>
       <label className="block text-sm font-medium">Role
@@ -93,7 +93,7 @@ function MemberRow({ connection, family, member, onAction }: {
       </details>
       <button className="text-sm text-destructive underline" onClick={() =>
         void onAction(() => disableFamilyMember(connection, family.familyId, member), 'Caregiver disabled.')
-      }>Disable access</button>
+      }>Revoke access</button>
     </>}
     {member.status === 'Disabled' && <>
       <PatientChoices family={family} selected={selected} onChange={setSelected} />
@@ -127,9 +127,14 @@ export function FamilyAccess({ connection, onChanged }: {
     setMembers([]); setInvitation(null); setMessage('');
     if (!familyId) return;
     let alive = true;
-    Promise.all([getFamilyInvitation(connection, familyId), listFamilyMembers(connection, familyId)])
-      .then(([value, people]) => { if (alive) { setInvitation(value); setMembers(people); } })
-      .catch(error => { if (alive) setMessage(error instanceof Error ? error.message : 'Could not load family access.'); });
+    void Promise.allSettled([getFamilyInvitation(connection, familyId), listFamilyMembers(connection, familyId)])
+      .then(([invite, people]) => {
+        if (!alive) return;
+        if (invite.status === 'fulfilled') setInvitation(invite.value);
+        if (people.status === 'fulfilled') setMembers(people.value);
+        if (people.status === 'rejected') setMessage(people.reason instanceof Error ? people.reason.message : 'Could not load family members.');
+        else if (invite.status === 'rejected') setMessage(invite.reason instanceof Error ? invite.reason.message : 'Could not load the Family Code.');
+      });
     return () => { alive = false; };
   }, [connection, familyId]);
 
@@ -138,8 +143,11 @@ export function FamilyAccess({ connection, onChanged }: {
   const others = members.filter(member => member.status === 'Active' || member.status === 'Disabled');
 
   async function reload() {
-    const [value, people] = await Promise.all([getFamilyInvitation(connection, family!.familyId), listFamilyMembers(connection, family!.familyId)]);
-    setInvitation(value); setMembers(people); onChanged();
+    const people = await listFamilyMembers(connection, family!.familyId);
+    setMembers(people);
+    try { setInvitation(await getFamilyInvitation(connection, family!.familyId)); }
+    catch { setInvitation(null); }
+    onChanged();
   }
 
   async function act(action: () => Promise<unknown>, success: string) {
@@ -150,9 +158,21 @@ export function FamilyAccess({ connection, onChanged }: {
     finally { setBusy(false); }
   }
 
-  return <section className="space-y-6 rounded-2xl border bg-card p-6" aria-label="Family access">
-    <div><h2 className="text-xl font-bold">Family access</h2><p className="text-sm text-muted-foreground">Only Primary caregivers can share codes or approve requests.</p></div>
+  return <section className="space-y-6 rounded-2xl border bg-card p-6" aria-label="Family members and access">
+    <div><h2 className="text-xl font-bold">Family members</h2><p className="text-sm text-muted-foreground">Primary caregivers can review requests, change roles, and revoke access.</p></div>
     <fieldset disabled={busy} className="space-y-6 disabled:opacity-60">
+    <div className="space-y-3">
+      <h3 className="font-semibold">Current members</h3>
+      {others.map(member => <MemberRow key={member.userId + member.status + member.role + member.patientIds.join(',')} connection={connection} family={family} member={member} onAction={act} />)}
+      {!others.length && <p className="text-sm text-muted-foreground">No family members to show.</p>}
+    </div>
+    <div className="space-y-3">
+      <div className="flex items-center justify-between gap-3"><h3 className="font-semibold">Requests to join {pending.length ? `(${pending.length})` : ''}</h3>
+        <button className="text-sm underline disabled:opacity-50" disabled={busy} onClick={() => { void act(async () => undefined, 'Requests refreshed.'); }}>Refresh requests</button>
+      </div>
+      {pending.length ? pending.map(member => <PendingRow key={member.userId} connection={connection} family={family} member={member} invitation={invitation} onAction={act} />)
+        : <p className="text-sm text-muted-foreground">No requests are waiting.</p>}
+    </div>
     <div className="space-y-3 rounded-xl bg-muted/40 p-4">
       <h3 className="font-semibold">Family Code</h3>
       <p className="text-sm text-muted-foreground">Codes expire after 7 days. Copy a new code now; it cannot be shown again after you leave this page.</p>
@@ -173,17 +193,6 @@ export function FamilyAccess({ connection, onChanged }: {
           }, invitation ? 'Code replaced. The old code can no longer create requests.' : 'Family Code generated.')
         }>{invitation ? 'Replace code' : 'Generate code'}</button>
       </div>
-    </div>
-    <div className="space-y-3">
-      <div className="flex items-center justify-between gap-3"><h3 className="font-semibold">Notifications {pending.length ? `(${pending.length})` : ''}</h3>
-        <button className="text-sm underline disabled:opacity-50" disabled={busy} onClick={() => { void act(async () => undefined, 'Requests refreshed.'); }}>Refresh requests</button>
-      </div>
-      {pending.length ? pending.map(member => <PendingRow key={member.userId} connection={connection} family={family} member={member} invitation={invitation} onAction={act} />)
-        : <p className="text-sm text-muted-foreground">No requests are waiting.</p>}
-    </div>
-    <div className="space-y-3">
-      <h3 className="font-semibold">People</h3>
-      {others.map(member => <MemberRow key={member.userId + member.status + member.role + member.patientIds.join(',')} connection={connection} family={family} member={member} onAction={act} />)}
     </div>
     </fieldset>
     {message && <p role="status" className="text-sm">{message}</p>}
