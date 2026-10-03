@@ -12,15 +12,11 @@ import {
   Trash2,
 } from 'lucide-react';
 import { createEventId, localDateValue } from '@/lib/maymay-types';
+import type { TrackerAnswer, TrackerDefinition, TrackerKind } from '@/lib/maymay-schema';
 
-type TrackerKind = 'mood' | 'good' | 'difficult' | 'checkin' | 'count';
-type Answer = string | boolean | number;
-type Tracker = {
+type Answer = TrackerAnswer;
+type Tracker = TrackerDefinition & {
   id: string;
-  kind: TrackerKind;
-  title: string;
-  description: string;
-  days: number[];
   deleted?: boolean;
 };
 type Spontaneous = {
@@ -31,7 +27,7 @@ type Spontaneous = {
   note: string;
   time: string;
 };
-type TrackerDraft = Pick<Tracker, 'kind' | 'title' | 'description' | 'days'>;
+type TrackerDraft = TrackerDefinition;
 
 const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const everyDay = [0, 1, 2, 3, 4, 5, 6];
@@ -65,13 +61,15 @@ export type TrackerData = {
   answers: Record<string, Record<string, Answer>>;
   spontaneous: Spontaneous[];
 };
-export function TodayTracker({ patientName, date, onDateChange, data, onChange, readOnly = false }: {
+export function TodayTracker({ patientName, date, onDateChange, data, onChange, readOnly = false, saveStatus, saveMessage }: {
   patientName: string;
   date: string;
   onDateChange: (date: string) => void;
   data: TrackerData;
   onChange: (change: (current: TrackerData) => TrackerData) => void;
   readOnly?: boolean;
+  saveStatus?: 'loading' | 'saving' | 'saved' | 'pending' | 'error';
+  saveMessage?: string;
 }) {
   const { trackers, answers, spontaneous } = data;
   const today = localDateValue();
@@ -130,7 +128,7 @@ export function TodayTracker({ patientName, date, onDateChange, data, onChange, 
       ([key]) =>
         spontaneous.filter(
           (item) => `${item.kind}:${item.title.trim().toLowerCase()}` === key,
-        ).length >= 3,
+        ).length >= 4,
     )
     .map(([, item]) => item)
     .filter(
@@ -149,6 +147,12 @@ export function TodayTracker({ patientName, date, onDateChange, data, onChange, 
       else nextDay[id] = value;
       return { ...current, [date]: nextDay };
     });
+  }
+
+  function setCount(id: string, raw: string) {
+    if (raw === '') { setAnswer(id, null); return; }
+    const value = Number(raw);
+    if (Number.isSafeInteger(value) && value >= 0) setAnswer(id, value);
   }
 
   function openAdd(prefill?: Spontaneous) {
@@ -226,6 +230,7 @@ export function TodayTracker({ patientName, date, onDateChange, data, onChange, 
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
+      {saveStatus && <output role="status" aria-live="polite" className="block text-sm text-muted-foreground">{saveMessage ?? saveStatus}</output>}
       {readOnly && <p className="text-sm text-muted-foreground">View-only access. A caregiver can record answers.</p>}
         {screen === 'day' && (
           <>
@@ -320,7 +325,7 @@ export function TodayTracker({ patientName, date, onDateChange, data, onChange, 
                         className="h-12 w-full rounded-xl border bg-background px-3"
                         value={typeof value === 'string' ? value : ''}
                         onChange={(event) =>
-                          setAnswer(item.id, event.target.value || null)
+                          setAnswer(item.id, (event.target.value || null) as TrackerAnswer | null)
                         }
                       >
                         <option value="">Choose a mood</option>
@@ -356,17 +361,7 @@ export function TodayTracker({ patientName, date, onDateChange, data, onChange, 
                           placeholder="—"
                           className="h-12 w-20 rounded-xl border bg-background text-center text-lg font-semibold"
                           value={typeof value === 'number' ? value : ''}
-                          onChange={(event) =>
-                            setAnswer(
-                              item.id,
-                              event.target.value === ''
-                                ? null
-                                : Math.max(
-                                    0,
-                                    Math.trunc(Number(event.target.value)),
-                                  ),
-                            )
-                          }
+                          onChange={(event) => setCount(item.id, event.target.value)}
                         />
                         <button
                           aria-label={`Increase ${item.title}`}
@@ -568,8 +563,8 @@ export function TodayTracker({ patientName, date, onDateChange, data, onChange, 
                   key={item.kind + item.title}
                   className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-sky-50 p-4 text-sm text-sky-950 dark:bg-sky-950 dark:text-sky-100"
                 >
-                  <span>
-                    <b>{item.title}</b> has been logged three times. Add it to
+                      <span>
+                    <b>{item.title}</b> has been logged four times. Add it to
                     the daily check-in?
                   </span>
                   <button

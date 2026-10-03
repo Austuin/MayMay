@@ -58,6 +58,10 @@ vi.mock('@/hooks/use-care-sync', () => ({
     acceptSaved: vi.fn(), saveDraft: vi.fn(), stop: vi.fn(),
   }),
 }));
+vi.mock('@/hooks/use-care-records', () => ({
+  useCareRecords: () => ({ data: { trackers: [], answers: {}, spontaneous: [] },
+    status: 'saved', message: 'Saved', conflicts: [], change: vi.fn(), retry: vi.fn(), choose: vi.fn() }),
+}));
 
 vi.mock('@/lib/maymay-invitations', () => ({
   getFamilyInvitation: vi.fn(async () => null),
@@ -110,7 +114,7 @@ describe('Stage B setup', () => {
     await waitFor(() => expect(mocks.createPatient).toHaveBeenCalledWith(mocks.family, 'family-a', {
       name: 'Sam', birthdate: '2018-01-02', sex: 'Female', ethnicity: 'Example', supportNeeds: 'Allow extra response time',
     }));
-    await screen.findByText("Today's check-in");
+    await screen.findByText('Daily check-in');
     fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
     const editForm = screen.getByRole('button', { name: 'Save patient details' }).closest('form')!;
     const ethnicity = within(editForm).getByLabelText('Ethnicity');
@@ -136,7 +140,7 @@ describe('Stage B setup', () => {
     fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'setup@example.test' } });
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'a-test-password' } });
     fireEvent.click(screen.getAllByRole('button', { name: 'Sign in' }).at(-1)!);
-    await screen.findByText("Today's check-in");
+    await screen.findByText('Daily check-in');
     expect(screen.queryByLabelText('Family')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
     await screen.findByRole('heading', { name: 'Sign in to continue' });

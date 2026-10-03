@@ -36,6 +36,7 @@ import { FamilyAccess } from './family-access';
 import { JoinFamilyForm } from './join-family-form';
 import { PatientForm } from './patient-form';
 import { PasswordResetForm } from './password-reset-form';
+import { TodayTracker } from './today-tracker';
 import {
   connectFirebase,
   connectFirebaseWithGoogle,
@@ -56,6 +57,7 @@ import {
 import { meltdownEstimate, summarizeEntries } from '@/lib/maymay-insights';
 import { watchPendingRequests, type PendingRequest } from '@/lib/maymay-invitations';
 import { useCareSync } from '@/hooks/use-care-sync';
+import { useCareRecords } from '@/hooks/use-care-records';
 import { hasLegacyCareCache } from '@/lib/maymay-sync-storage';
 import {
   emptyEntry,
@@ -217,6 +219,7 @@ export default function HomePage() {
   const [pendingRequests, setPendingRequests] = useState<PendingRequest[]>([]);
   const connectionRef = useRef<FirebaseConnection | null>(null);
   const careSync = useCareSync(firebaseConnection);
+  const careRecords = useCareRecords(firebaseConnection, selectedDate);
   const { entries, message: saveMessage } = careSync;
   const [legacyCache, setLegacyCache] = useState(false);
 
@@ -494,7 +497,7 @@ export default function HomePage() {
   }, []);
 
   if (!hydrated || syncState === 'starting' || syncState === 'connecting'
-    || (syncState === 'connected' && Boolean(firebaseConnection?.childId) && careSync.status === 'loading')) {
+    || (syncState === 'connected' && Boolean(firebaseConnection?.childId) && careRecords.status === 'loading')) {
     return (
       <main className="access-shell">
         <output className="access-loading"><LoaderCircle className="animate-spin" /><span>Starting MayMay…</span></output>
@@ -608,12 +611,29 @@ export default function HomePage() {
         </TabsList>
 
         <TabsContent value="today" className="mt-5">
-          <section className="mx-auto max-w-3xl rounded-2xl border bg-card p-6 shadow-sm">
-            <p className="text-sm font-semibold text-primary">Today's check-in</p>
-            <h1 className="mt-2 text-2xl font-bold">{firebaseConnection?.patient?.name ?? 'Patient'}</h1>
-            <p className="mt-3 text-muted-foreground">Your family and patient setup is saved. Daily tracking is not available in this build yet.</p>
-            <Button className="mt-5" variant="outline" onClick={() => setActiveTab('settings')}>View family and patient details</Button>
-          </section>
+          <TodayTracker
+            key={`${firebaseConnection?.profile.familyId}:${firebaseConnection?.childId}`}
+            patientName={firebaseConnection?.patient?.name ?? 'Patient'}
+            date={selectedDate} onDateChange={setSelectedDate}
+            data={careRecords.data} onChange={careRecords.change}
+            readOnly={currentRole === 'viewer'}
+            saveStatus={careRecords.status} saveMessage={careRecords.message}
+          />
+          {careRecords.status === 'error' && <div role="alert" className="mx-auto mt-4 max-w-3xl rounded-xl border border-amber-300 bg-card p-4">
+            <p>{careRecords.message}</p>
+            <Button variant="outline" className="mt-2" onClick={careRecords.retry}>Retry</Button>
+          </div>}
+          {careRecords.conflicts.map(conflict => <section key={`${conflict.target}:${conflict.recordId}`} className="mx-auto mt-4 max-w-3xl rounded-xl border border-amber-300 bg-card p-4">
+            <h2 className="font-semibold">Another caregiver changed this record</h2>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <div><b>Saved version</b><pre className="mt-1 whitespace-pre-wrap text-sm">{JSON.stringify(conflict.remote, null, 2)}</pre></div>
+              <div><b>Your edit</b><pre className="mt-1 whitespace-pre-wrap text-sm">{JSON.stringify(conflict.local, null, 2)}</pre></div>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Button variant="outline" onClick={() => careRecords.choose(conflict.recordId, conflict.target, false)}>Use saved version</Button>
+              <Button variant="outline" onClick={() => careRecords.choose(conflict.recordId, conflict.target, true)}>Save my edit instead</Button>
+            </div>
+          </section>)}
         </TabsContent>
 
         <TabsContent value="insights" className="mt-5">

@@ -1,6 +1,6 @@
 # MayMay 1.0 data foundation
 
-Stages 1–3 define the production records and connect account/family/patient setup and trusted invitations. Nothing in these stages deploys rules, resets data, or activates the live database. Tracker and observation persistence is connected to Today in Stage 4.
+Stages 1–3 define the production records and connect account/family/patient setup and trusted invitations. Stage 4 connects tracker and observation persistence to Today. None of these stages deploys rules, resets data, or activates the live database.
 
 ## Firestore layout
 
@@ -16,6 +16,8 @@ Stages 1–3 define the production records and connect account/family/patient se
 | Family invitation | `families/{FamId}/invitations/{InviteId}` |
 | Tracker | `families/{FamId}/patients/{PatId}/trackers/{TrackerId}` |
 | Observation | `families/{FamId}/patients/{PatId}/observations/{ObservationId}` |
+| Tracker save receipt | `families/{FamId}/patients/{PatId}/trackers/{TrackerId}/mutations/{MutationId}` |
+| Observation save receipt | `families/{FamId}/patients/{PatId}/observations/{ObservationId}/mutations/{MutationId}` |
 
 The TypeScript field definitions are in `lib/maymay-schema.ts`. Database field names use lower camel case (`familyId`, `patientId`, `userId`) for the IDs in the proposal. `supportNeeds` represents Communication and support needs. Sex and autism support level have explicit allowed values. Birthdate is optional; age is calculated and never stored.
 
@@ -26,6 +28,8 @@ Family and patient indexes are discovery hints only. Server rules require Active
 Admins are global account records with `userId`, `status` (Active/Disabled), `assignedBy`, `dateCreated`, and `dateUpdated`. An admin may also be a Primary, Caregiver, or Viewer in any family, or have no family membership. Sign-in loads the account's admin record independently. There is no self-assignment UI, and browser writes to Admins are denied. Only trusted administration can assign or revoke status. This stage grants no additional permissions; later admin abilities must receive explicit server authorization. Admin assignments should be preserved alongside Authentication accounts during the family/care-data reset.
 
 Trackers define the schedule/input. Observations hold the recorded answer or spontaneous event. Daily observation IDs combine tracker ID and local date to prevent duplicate answers. Answer observations keep the original tracker title, description, and kind; edits cannot change that snapshot or move a record to another day. No and zero are actual values; no record means unanswered. Revisions and immutable creator information protect updates. Deletion is represented by `deletedAt`; physical deletion is denied.
+
+Today listens to the selected patient's Trackers and selected local day's Observations. Each answer is a separate document; spontaneous events have distinct IDs. Care edits store immutable device drafts under a scope containing project, generation, account, family, and patient. A transaction compares the edit's original revision with the server record and writes a mutation receipt alongside the record. Receipts let a retry identify a save whose acknowledgment was lost. A conflicting edit requires the caregiver to choose the saved version or explicitly retry their own edit. Starter Trackers are written once in the patient-creation batch and have no answers.
 
 ## Release activation
 
