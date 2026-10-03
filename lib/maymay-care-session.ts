@@ -1,7 +1,7 @@
 import { onSnapshot, query, where } from 'firebase/firestore';
 import type { FirebaseConnection } from './maymay-firebase';
 import { createEventId } from './maymay-types';
-import { dailyObservationId, type ObservationRecord, type TrackerAnswer, type TrackerDefinition, type TrackerRecord } from './maymay-schema';
+import { dailyObservationId, spontaneousRepeatKey, type ObservationRecord, type TrackerAnswer, type TrackerDefinition, type TrackerRecord } from './maymay-schema';
 import { careCollection, commitCareMutation, observationFromDocument, trackerFromDocument,
   CareConflict, type CareMutation, type ObservationDraft } from './maymay-care-records';
 import type { TrackerData } from '@/app/today-tracker';
@@ -36,7 +36,7 @@ function localTime(value: unknown) {
 function observationDraft(item: TrackerData['spontaneous'][number]): ObservationDraft {
   return { localDate: item.date, occurredAt: occurredAt(item.date, item.time), kind: item.kind,
     trackerId: null, trackerSnapshot: null, value: null, title: item.title,
-    note: item.note, details: {} };
+    note: item.note, details: item.details ?? {}, repeatKey: spontaneousRepeatKey(item.kind, item.title) };
 }
 
 function preserveNewer<T extends { revision: number }>(previous: T[], incoming: T[], id: (item: T) => string): T[] {
@@ -156,7 +156,8 @@ export class CareRecordSession {
         data.answers[item.localDate][item.trackerId] = item.value;
       } else if (item.kind !== 'answer') {
         data.spontaneous.push({ id: item.observationId, date: item.localDate,
-          kind: item.kind, title: item.title, note: item.note, time: localTime(item.occurredAt) });
+          kind: item.kind, title: item.title, note: item.note, time: localTime(item.occurredAt),
+          details: item.details });
       }
     }
     return data;

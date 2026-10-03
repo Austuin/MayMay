@@ -35,6 +35,9 @@ vi.mock('@/hooks/use-care-records', () => ({
     status: 'saved', message: 'Saved', conflicts: [], change: mocks.save, retry: vi.fn(), choose: vi.fn(),
   }),
 }));
+vi.mock('@/hooks/use-spontaneous-catalog', () => ({
+  useSpontaneousCatalog: () => ({ previous: [], counts: {}, hasMore: false, loadMore: vi.fn() }),
+}));
 
 const originalCrypto = globalThis.crypto;
 beforeEach(() => { mocks.connection = mocks.makeConnection(); mocks.save.mockClear(); localStorage.clear(); sessionStorage.clear(); });

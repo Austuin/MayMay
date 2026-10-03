@@ -5,7 +5,7 @@ import { createInvitationHandler, createInvitationService } from '../scripts/fam
 import { readFile } from 'node:fs/promises';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { assertFails, assertSucceeds, initializeTestEnvironment, type RulesTestEnvironment } from '@firebase/rules-unit-testing';
-import { collection, deleteDoc, doc, getDoc, getDocs, setDoc, Timestamp, updateDoc, type Firestore } from 'firebase/firestore';
+import { collection, deleteDoc, doc, getDoc, getDocs, serverTimestamp, setDoc, Timestamp, updateDoc, type Firestore } from 'firebase/firestore';
 import type { FirebaseConnection } from '../lib/maymay-firebase';
 import { createFamilyFoundation } from '../lib/maymay-access';
 import { createFamily, createPatient, selectFamilyPatient, updatePatient } from '../lib/maymay-firebase';
@@ -15,7 +15,7 @@ import {
   restoreFamilyMember, rotateFamilyCode,
 } from '../lib/maymay-invitations';
 import { commitEventMutations, recordFromDocument } from '../lib/maymay-sync-firebase';
-import { CareConflict, commitCareMutation, type CareMutation } from '../lib/maymay-care-records';
+import { CareConflict, commitCareMutation, type CareMutation, type ObservationDraft } from '../lib/maymay-care-records';
 import { mutationsForEdit, SaveConflict, type EventMutation } from '../lib/maymay-sync-model';
 import { emptyEntry } from '../lib/maymay-types';
 import type { EventRecord } from '../lib/maymay-events';
@@ -495,6 +495,11 @@ describe('tracker and observation saves with real Firestore rules', () => {
 
   it('shares No and Yes across caregivers while protecting revisions, snapshots, and Viewer access', async () => {
     await commitCareMutation(connection('alice'), tracker);
+    const trackerPath = 'families/maymay/patients/maymay/trackers/school';
+    const originalTracker = (await getDoc(doc(connection('alice').db, trackerPath))).data()!;
+    await assertFails(setDoc(doc(connection('alice').db, trackerPath), {
+      ...originalTracker, kind: 'count', revision: 2, updatedBy: 'alice', updatedAt: serverTimestamp(),
+    }));
     await commitCareMutation(connection('alice'), answer('alice', false, null));
     const path = `families/maymay/patients/maymay/observations/school_${day}`;
     expect((await getDoc(doc(connection('bob').db, path))).data()?.value).toBe(false);
@@ -510,5 +515,35 @@ describe('tracker and observation saves with real Firestore rules', () => {
     await commitCareMutation(connection('bob'), answer('bob', null, 2));
     expect((await getDoc(doc(connection('alice').db, path))).data()).toMatchObject({ revision: 3, value: true });
     expect((await getDoc(doc(connection('alice').db, path))).data()?.deletedAt).toBeTruthy();
+    await commitCareMutation(connection('alice'), { ...tracker, id: 'remove-school', expectedRevision: 1, after: null });
+    expect((await getDoc(doc(connection('bob').db, trackerPath))).data()?.deletedAt).toBeTruthy();
+    expect((await getDoc(doc(connection('bob').db, path))).data()?.trackerSnapshot).toMatchObject({ title: 'School on time' });
+  });
+
+  it('edits, soft deletes, and undoes one spontaneous occurrence without reusing its ID', async () => {
+    const id = 'occurrence-one';
+    const first: CareMutation = { id: 'save-occurrence-one', target: 'observation', recordId: id,
+      expectedRevision: null, predecessor: null, queuedAt: 1,
+      after: { localDate: day, occurredAt: `${day}T09:30:00Z`, kind: 'meltdown',
+        trackerId: null, trackerSnapshot: null, value: null, title: 'Loud assembly',
+        repeatKey: 'meltdown:loud assembly', note: 'Private context', details: { whatHelped: 'Quiet room' } } };
+    await commitCareMutation(connection('alice'), first);
+    const changed: CareMutation = { ...first, id: 'edit-occurrence-one', expectedRevision: 1,
+      after: { ...first.after as ObservationDraft, kind: 'difficult',
+        repeatKey: 'difficult:loud assembly', note: '' } };
+    await commitCareMutation(connection('bob'), changed);
+    const path = `families/maymay/patients/maymay/observations/${id}`;
+    expect((await getDoc(doc(connection('alice').db, path))).data()).toMatchObject({ kind: 'difficult', revision: 2, note: '' });
+    await commitCareMutation(connection('alice'), { ...first, id: 'remove-occurrence-one', expectedRevision: 2, after: null });
+    expect((await getDoc(doc(connection('bob').db, path))).data()?.deletedAt).toBeTruthy();
+    await commitCareMutation(connection('bob'), { ...changed, id: 'undo-occurrence-one', expectedRevision: 3 });
+    expect((await getDoc(doc(connection('alice').db, path))).data()).toMatchObject({ revision: 4, deletedAt: null });
+    const { repeatKey: _repeatKey, ...withoutRepeatKey } = first.after as ObservationDraft;
+    await assertFails(setDoc(doc(connection('alice').db, `families/maymay/patients/maymay/observations/invalid-repeat`), {
+      ...withoutRepeatKey, occurredAt: Timestamp.fromDate(new Date(`${day}T09:30:00Z`)),
+      observationId: 'invalid-repeat', familyId: 'maymay', patientId: 'maymay',
+      dataGeneration: 'test-generation', createdBy: 'alice', updatedBy: 'alice',
+      createdAt: serverTimestamp(), updatedAt: serverTimestamp(), revision: 1, deletedAt: null,
+    }));
   });
 });

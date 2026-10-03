@@ -1,12 +1,13 @@
 import { collection, doc, runTransaction, serverTimestamp, Timestamp, type Firestore } from 'firebase/firestore';
 import type { FirebaseConnection } from './maymay-firebase';
-import { collections, type MeltdownDetails, type ObservationRecord, type TrackerAnswer, type TrackerDefinition, type TrackerRecord } from './maymay-schema';
+import { collections, spontaneousRepeatKey, type MeltdownDetails, type ObservationRecord, type TrackerAnswer, type TrackerDefinition, type TrackerRecord } from './maymay-schema';
 
 export type CareRecord = TrackerRecord | ObservationRecord;
 export type ObservationDraft = {
   localDate: string; occurredAt: string; kind: ObservationRecord['kind'];
   trackerId: string | null; trackerSnapshot: ObservationRecord['trackerSnapshot'];
   value: TrackerAnswer | null; title: string; note: string; details: MeltdownDetails;
+  repeatKey?: string;
 };
 export type CareMutation = {
   id: string; target: 'tracker' | 'observation'; recordId: string;
@@ -77,12 +78,17 @@ export async function commitCareMutation(connection: FirebaseConnection, mutatio
         ...(after ?? {}), deletedAt: after ? null : serverTimestamp() };
     } else {
       const after = mutation.after as ObservationDraft | null;
-      if (raw && after && (after.localDate !== raw.localDate || after.kind !== raw.kind || after.trackerId !== raw.trackerId)) {
-        throw new Error('The observation date and type cannot change.');
+      if (raw && after && (after.localDate !== raw.localDate || after.trackerId !== raw.trackerId
+        || (raw.kind === 'answer' && after.kind !== 'answer')
+        || (raw.kind !== 'answer' && after.kind === 'answer'))) {
+        throw new Error('The observation date or answer type cannot change.');
       }
       payload = { ...(raw ?? {}), ...audit, observationId: mutation.recordId,
         ...(after ? { ...after, occurredAt: Timestamp.fromDate(new Date(after.occurredAt)),
           trackerSnapshot: raw?.trackerSnapshot ?? after.trackerSnapshot } : {}),
+        ...((after?.kind ?? raw?.kind) !== 'answer' && (after || raw)
+          ? { repeatKey: after?.repeatKey ?? raw?.repeatKey
+              ?? spontaneousRepeatKey(raw!.kind as 'good' | 'difficult' | 'meltdown' | 'other', String(raw!.title)) } : {}),
         deletedAt: after ? null : serverTimestamp() };
     }
     transaction.set(ref, payload);
