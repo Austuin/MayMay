@@ -11,10 +11,10 @@ const initial: CareView = {
 export function useCareRecords(connection: FirebaseConnection | null, date: string) {
   const [snapshot, setSnapshot] = useState<{ key: string; view: CareView }>({ key: '', view: initial });
   const session = useRef<CareRecordSession | null>(null);
-  const key = connection?.childId ? [connection.app.options.projectId, connection.dataGeneration,
-    connection.user.uid, connection.profile.familyId, connection.childId, date].join('|') : '';
+  const key = connection?.patientId ? [connection.app.options.projectId, connection.dataGeneration,
+    connection.user.uid, connection.profile.familyId, connection.patientId, date].join('|') : '';
   useEffect(() => {
-    if (!connection?.childId) return;
+    if (!connection?.patientId) return;
     const current = new CareRecordSession(connection, date, view => setSnapshot({ key, view }));
     session.current = current;
     current.start();

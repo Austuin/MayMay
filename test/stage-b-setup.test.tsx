@@ -10,15 +10,15 @@ const mocks = vi.hoisted(() => {
   };
   const empty = {
     ...base, profile: { familyId: '', role: 'pending', active: false },
-    childId: '', families: [],
+    patientId: '', families: [],
   };
   const family = {
     ...base, profile: { familyId: 'family-a', role: 'master', active: true },
-    childId: '', families: [{ familyId: 'family-a', name: 'Smith Family', role: 'Primary', patients: [] }],
+    patientId: '', families: [{ familyId: 'family-a', name: 'Smith Family', role: 'Primary', patients: [] }],
   };
   const patient = { patientId: 'patient-a', familyId: 'family-a', name: 'Sam', sex: 'Female', ethnicity: 'Example', birthdate: '2018-01-02', supportNeeds: 'Allow extra response time' };
   const ready = {
-    ...family, childId: patient.patientId, patient,
+    ...family, patientId: patient.patientId, patient,
     families: [{ ...family.families[0], patients: [patient] }],
   };
   return {
@@ -58,13 +58,6 @@ vi.mock('@/lib/maymay-firebase', () => ({
   resetFirebasePassword: mocks.resetFirebasePassword,
 }));
 
-vi.mock('@/hooks/use-care-sync', () => ({
-  useCareSync: () => ({
-    entries: [], status: 'saved', message: 'Connected', conflicts: [],
-    getEntries: () => [], replaceEntry: vi.fn(), retry: vi.fn(),
-    acceptSaved: vi.fn(), saveDraft: vi.fn(), stop: vi.fn(),
-  }),
-}));
 vi.mock('@/hooks/use-care-records', () => ({
   useCareRecords: () => ({ data: { trackers: [], answers: {}, spontaneous: [] },
     status: 'saved', message: 'Saved', conflicts: [], change: vi.fn(), retry: vi.fn(), choose: vi.fn() }),

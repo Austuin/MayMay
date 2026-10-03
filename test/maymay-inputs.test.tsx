@@ -1,7 +1,7 @@
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import HomePage from '@/app/page';
-import { createMeltdown, createPossibleTrigger } from '@/lib/maymay-types';
+import { createEventId } from '@/lib/maymay-types';
 
 const mocks = vi.hoisted(() => {
   const makeConnection = () => {
@@ -11,7 +11,7 @@ const mocks = vi.hoisted(() => {
       accountName: 'Caregiver',
       user: { uid: 'caregiver', email: 'caregiver@example.test', displayName: 'Caregiver' },
       profile: { familyId: 'family-a', role: 'caregiver', active: true },
-      childId: 'sam', patient, requests: [],
+      patientId: 'sam', patient, requests: [],
       families: [{ familyId: 'family-a', name: 'Family A', role: 'Caregiver', patients: [patient] }],
     };
   };
@@ -24,11 +24,8 @@ vi.mock('@/lib/maymay-firebase', () => ({
   disconnectFirebase: async () => undefined,
   selectFamilyPatient: (current: typeof mocks.connection, familyId: string, patientId: string) => {
     const patient = current.families.find(family => family.familyId === familyId)!.patients.find(item => item.patientId === patientId)!;
-    return { ...current, childId: patientId, patient };
+    return { ...current, patientId: patientId, patient };
   },
-}));
-vi.mock('@/hooks/use-care-sync', () => ({
-  useCareSync: () => ({ entries: [], status: 'saved', message: '', conflicts: [], getEntries: () => [], replaceEntry: mocks.save, stop: vi.fn() }),
 }));
 vi.mock('@/hooks/use-care-records', () => ({
   useCareRecords: () => ({
@@ -38,6 +35,12 @@ vi.mock('@/hooks/use-care-records', () => ({
 }));
 vi.mock('@/hooks/use-spontaneous-catalog', () => ({
   useSpontaneousCatalog: () => ({ previous: [], counts: {}, hasMore: false, loadMore: vi.fn() }),
+}));
+vi.mock('@/hooks/use-observation-history', () => ({
+  useObservationHistory: () => ({ observations: [{ observationId: 'school_2026-10-01', localDate: '2026-10-01',
+    kind: 'answer', trackerId: 'school', trackerSnapshot: { title: 'School on time', kind: 'good' },
+    title: 'School on time', value: true, deletedAt: null }], windows: [{ start: '2026-07-04', end: '2026-10-01' }],
+    loading: false, error: '', hasMore: false, loadMore: vi.fn(), refresh: vi.fn() }),
 }));
 
 const originalCrypto = globalThis.crypto;
@@ -50,8 +53,8 @@ afterEach(() => {
 describe('MayMay Today inputs', () => {
   it('creates event IDs when Web Crypto is completely unavailable', () => {
     Object.defineProperty(globalThis, 'crypto', { configurable: true, value: undefined });
-    expect(createPossibleTrigger().id).toMatch(/^local-[a-z0-9]+-[a-z0-9]+$/);
-    expect(createMeltdown().id).toMatch(/^local-[a-z0-9]+-[a-z0-9]+$/);
+    expect(createEventId()).toMatch(/^local-[a-z0-9]+-[a-z0-9]+$/);
+    expect(createEventId()).toMatch(/^local-[a-z0-9]+-[a-z0-9]+$/);
   });
 
   it('creates distinct event IDs on an HTTP LAN address without randomUUID', () => {
@@ -59,7 +62,7 @@ describe('MayMay Today inputs', () => {
       randomUUID: () => { throw new DOMException('Not available'); },
       getRandomValues: originalCrypto.getRandomValues.bind(originalCrypto),
     } });
-    const ids = [createPossibleTrigger().id, createMeltdown().id];
+    const ids = [createEventId(), createEventId()];
     expect(ids[0]).toMatch(/^[0-9a-f-]{36}$/);
     expect(ids[0]).not.toBe(ids[1]);
   });
@@ -70,5 +73,15 @@ describe('MayMay Today inputs', () => {
     expect(screen.getByText(/Sam ·/)).toBeTruthy();
     expect(screen.getByText('How was the morning?')).toBeTruthy();
     expect(mocks.save).not.toHaveBeenCalled();
+  });
+
+  it('shows the same saved observation in History and Insights', async () => {
+    render(<HomePage />);
+    await screen.findByLabelText('Morning Mood mood');
+    fireEvent.click(screen.getByRole('tab', { name: 'History' }));
+    expect(screen.getByText('School on time')).toBeTruthy();
+    fireEvent.click(screen.getByRole('tab', { name: 'Insights' }));
+    expect(screen.getByText('1 Yes · 0 No')).toBeTruthy();
+    expect(screen.getAllByText(/1 recorded day/).length).toBeGreaterThan(0);
   });
 });

@@ -14,11 +14,8 @@ import {
   listFamilyMembers, listPendingRequests, rejectFamilyRequest, requestFamilyAccess,
   restoreFamilyMember, rotateFamilyCode,
 } from '../lib/maymay-invitations';
-import { commitEventMutations, recordFromDocument } from '../lib/maymay-sync-firebase';
 import { CareConflict, commitCareMutation, type CareMutation, type ObservationDraft } from '../lib/maymay-care-records';
-import { mutationsForEdit, SaveConflict, type EventMutation } from '../lib/maymay-sync-model';
-import { emptyEntry } from '../lib/maymay-types';
-import type { EventRecord } from '../lib/maymay-events';
+import { readObservationWindow } from '../lib/maymay-observation-history';
 
 let env: RulesTestEnvironment;
 let invitationServer: Server;
@@ -27,18 +24,8 @@ let adminDb: ReturnType<typeof getAdminFirestore>;
 const nativeFetch = globalThis.fetch;
 const day = '2026-09-30';
 const eventPath = (id: string) => `families/maymay/patients/maymay/events/${id}`;
-function connection(uid = 'alice', familyId = 'maymay', role = 'caregiver', childId = 'maymay') {
-  return { dataGeneration: 'test-generation', accountName: uid, db: env.authenticatedContext(uid).firestore(), user: { uid }, profile: { familyId, role, active: true }, childId } as unknown as FirebaseConnection;
-}
-async function read(id: string, uid = 'alice'): Promise<EventRecord | null> {
-  const snapshot = await getDoc(doc(connection(uid).db, eventPath(id)));
-  return snapshot.exists() ? recordFromDocument(id, snapshot.data()) : null;
-}
-function editNote(text: string, baseline: EventRecord | null = null): EventMutation {
-  return { id: crypto.randomUUID(), eventId: `${day}_note`, localDate: day,
-    expected: baseline ? { revision: baseline.revision, updatedAt: baseline.updatedAt } : null,
-    predecessor: null, queuedAt: Date.now(),
-    after: { id: `${day}_note`, type: 'note', occurredAt: `${day}T12:00:00Z`, data: { text } } };
+function connection(uid = 'alice', familyId = 'maymay', role = 'caregiver', patientId = 'maymay') {
+  return { dataGeneration: 'test-generation', accountName: uid, db: env.authenticatedContext(uid).firestore(), user: { uid }, profile: { familyId, role, active: true }, patientId } as unknown as FirebaseConnection;
 }
 
 beforeAll(async () => {
@@ -100,7 +87,7 @@ describe('multi-family access foundation', () => {
     const session = {
       app: { options: { projectId: 'demo-maymay-test' } }, db: creatorDb,
       user: { uid: 'setup-user', email: 'setup@example.test', displayName: 'Setup user' },
-      dataGeneration: 'test-generation', accountName: 'Test user', profile: { familyId: '', role: 'pending', active: false }, childId: '', families: [],
+      dataGeneration: 'test-generation', accountName: 'Test user', profile: { familyId: '', role: 'pending', active: false }, patientId: '', families: [],
     } as unknown as FirebaseConnection;
     const first = await createFamily(session, 'First family');
     expect(first.profile.role).toBe('master');
@@ -116,7 +103,7 @@ describe('multi-family access foundation', () => {
     expect(patient.patient?.name).toBe('Sam');
     expect(patient.patient?.ethnicity).toBe('Optional example');
     expect(patient.patient?.supportNeeds).toBe('Allow extra response time');
-    const patientRef = doc(creatorDb, 'families', first.profile.familyId, 'patients', patient.childId);
+    const patientRef = doc(creatorDb, 'families', first.profile.familyId, 'patients', patient.patientId);
     expect((await getDoc(patientRef)).data()?.birthdate).toBe('2018-01-02');
     const starters = (await getDocs(collection(patientRef, 'trackers'))).docs.map(item => item.data());
     expect(starters.map(item => item.title).sort()).toEqual(['Bowel Movements', 'Morning Mood', 'Went to School on Time']);
@@ -139,8 +126,8 @@ describe('multi-family access foundation', () => {
     await assertFails(updateDoc(patientRef, { supportNeeds: 123 }));
     const second = await createFamily(renamed, 'Second family');
     expect(second.families).toHaveLength(2);
-    expect(second.childId).toBe('');
-    const switched = selectFamilyPatient(second, first.profile.familyId, patient.childId);
+    expect(second.patientId).toBe('');
+    const switched = selectFamilyPatient(second, first.profile.familyId, patient.patientId);
     expect(switched.patient?.name).toBe('Sam Updated');
     await assertFails(getDoc(doc(db('outsider'), patientRef.path)));
   });
@@ -169,7 +156,6 @@ describe('multi-family access foundation', () => {
       await assertFails(setDoc(doc(db(uid), eventPath('private')), { data: { text: 'Overwrite' } }, { merge: true }));
     }
     await assertFails(getDoc(doc(db('alice'), 'families/maymay/patients/second/events/private')));
-    await assertFails(commitEventMutations(connection('alice', 'maymay', 'caregiver', 'second'), [editNote('Denied')]));
     await assertFails(getDoc(doc(db('alice'), 'families/other-family/patients/other-patient/events/private')));
     await assertSucceeds(getDoc(doc(db('alice'), eventPath('private'))));
     await assertFails(setDoc(doc(db('viewer'), eventPath('private')), { data: { text: 'Overwrite' } }, { merge: true }));
@@ -185,7 +171,6 @@ describe('multi-family access foundation', () => {
         setDoc(doc(context.firestore(), 'families/maymay/memberships/alice'), membership('maymay', 'alice', 'Caregiver', status)));
       await assertFails(getDoc(doc(db('alice'), 'families/maymay/patients/maymay')));
       await assertFails(getDoc(doc(db('alice'), eventPath('private'))));
-      await assertFails(commitEventMutations(connection('alice'), [editNote('Denied')]));
     }
   });
 
@@ -235,7 +220,7 @@ describe('Family Code requests and Primary approval', () => {
       db: env.authenticatedContext('owner', { email: 'owner@example.test' }).firestore(),
       user: { uid: 'owner', email: 'owner@example.test', displayName: 'Owner', getIdToken: async () => 'owner' },
       dataGeneration: 'test-generation', accountName: 'Test user', profile: { familyId: 'maymay', role: 'master', active: true },
-      childId: 'maymay',
+      patientId: 'maymay',
       families: [{ familyId: 'maymay', name: 'MayMay', role: 'Primary', primaryId: 'owner', dataGeneration: 'test-generation', patients: [{ familyId: 'maymay', patientId: 'maymay', name: 'Patient' }] }],
       requests: [],
     } as unknown as FirebaseConnection;
@@ -251,7 +236,7 @@ describe('Family Code requests and Primary approval', () => {
       app: { options: { projectId: 'demo-maymay-test' } }, db: firestore,
       user: { uid, email, displayName: uid, getIdToken: async () => uid },
       dataGeneration: 'test-generation', accountName: 'Test user', profile: { familyId: '', role: 'pending', active: false },
-      childId: '', families: [], requests: [],
+      patientId: '', families: [], requests: [],
     } as unknown as FirebaseConnection;
   }
 
@@ -381,118 +366,15 @@ describe('Family Code requests and Primary approval', () => {
   });
 });
 
-describe('concurrent caregiver saves with real Firestore rules', () => {
-  it('preserves independent mood and meal changes made from the same empty day', async () => {
-    const before = emptyEntry(day);
-    const breakfast = structuredClone(before); breakfast.meals.breakfast = 'Ate well';
-    const mood = structuredClone(before); mood.moods.morning.score = 4;
-    const a = mutationsForEdit(before, breakfast, [], []);
-    const b = mutationsForEdit(before, mood, [], []);
-    expect(a).toHaveLength(1); expect(b).toHaveLength(1);
-    await Promise.all([commitEventMutations(connection('alice'), a), commitEventMutations(connection('bob'), b)]);
-    expect((await read(a[0].eventId))?.data.outcome).toBe('Ate well');
-    expect((await read(b[0].eventId))?.data.score).toBe(4);
-    expect(await read(`${day}_health`)).toBeNull();
-  });
-
-  it('allows only one of two conflicting creates and retains the winner', async () => {
-    const results = await Promise.allSettled([
-      commitEventMutations(connection('alice'), [editNote('Alice')]),
-      commitEventMutations(connection('bob'), [editNote('Bob')]),
-    ]);
-    expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1);
-    expect(results.filter(result => result.status === 'rejected')).toHaveLength(1);
-    const failure = results.find(result => result.status === 'rejected') as PromiseRejectedResult;
-    expect(failure.reason).toBeInstanceOf(SaveConflict);
-    expect(['Alice', 'Bob']).toContain((await read(`${day}_note`))?.data.text);
-  });
-
-  it('removes only the explicitly selected event while preserving an event absent from a stale device', async () => {
-    const note = editNote('Remove this note');
-    await commitEventMutations(connection(), [note]);
-    const stale = await read(note.eventId);
-    const before = emptyEntry(day);
-    const after = structuredClone(before); after.meals.lunch = 'Ate well';
-    const lunch = mutationsForEdit(before, after, [], []);
-    await commitEventMutations(connection('bob'), lunch);
-    await commitEventMutations(connection(), [{ ...editNote('', stale), after: null }]);
-    expect((await read(note.eventId))?.deletedAt).toBeTruthy();
-    expect((await read(lunch[0].eventId))?.data.outcome).toBe('Ate well');
-  });
-
-  it('rejects a stale edit and a stale deletion of an existing record', async () => {
-    await commitEventMutations(connection(), [editNote('Initial')]);
-    const old = await read(`${day}_note`);
-    await commitEventMutations(connection('bob'), [editNote('Newer shared note', old)]);
-    await expect(commitEventMutations(connection(), [editNote('Stale', old)])).rejects.toBeInstanceOf(SaveConflict);
-    await expect(commitEventMutations(connection(), [{ ...editNote('', old), after: null }])).rejects.toBeInstanceOf(SaveConflict);
-    expect((await read(`${day}_note`))?.data.text).toBe('Newer shared note');
-  });
-
-  it('does not resurrect tombstones and retries successful writes without duplicating or reverting them', async () => {
-    const original = editNote('First');
-    await commitEventMutations(connection(), [original]);
-    const before = await read(original.eventId);
-    const deletion = { ...editNote('', before), after: null };
-    await commitEventMutations(connection('bob'), [deletion]);
-    await commitEventMutations(connection(), [original]); // lost acknowledgement, retried after deletion
-    expect((await read(original.eventId))?.deletedAt).toBeTruthy();
-    expect((await read(original.eventId))?.revision).toBe(2);
-    await expect(commitEventMutations(connection(), [editNote('Resurrect', before)])).rejects.toBeInstanceOf(SaveConflict);
-  });
-
-  it('coalesces typing, receipts each intent, and protects later queued edits from intervening caregivers', async () => {
-    const a = editNote('H');
-    const b = { ...editNote('Hello'), predecessor: a.id };
-    await commitEventMutations(connection(), [a, b]);
-    expect((await read(a.eventId))?.revision).toBe(1);
-    await commitEventMutations(connection(), [a]);
-    expect((await read(a.eventId))?.data.text).toBe('Hello');
-    const c = { ...editNote('Hello world'), predecessor: b.id };
-    await commitEventMutations(connection(), [c]);
-    await commitEventMutations(connection('bob'), [editNote('Bob changed it', await read(a.eventId))]);
-    const d = { ...editNote('Outdated continuation'), predecessor: c.id };
-    await expect(commitEventMutations(connection(), [d])).rejects.toBeInstanceOf(SaveConflict);
-  });
-
-  it('upgrades a legacy event on its first edit without rewriting its author or unknown fields', async () => {
-    const id = `${day}_note`;
-    await env.withSecurityRulesDisabled(context => setDoc(doc(context.firestore(), eventPath(id)), {
-      schemaVersion: 1, childId: 'maymay', type: 'note', localDate: day,
-      occurredAt: Timestamp.fromDate(new Date(`${day}T12:00:00Z`)),
-      createdAt: Timestamp.now(), updatedAt: Timestamp.now(), createdBy: 'original-author',
-      data: { text: 'Legacy', extraContext: 'Preserve me' },
-    }));
-    await commitEventMutations(connection(), [editNote('Updated', await read(id))]);
-    const snapshot = await getDoc(doc(connection().db, eventPath(id)));
-    expect(snapshot.data()).toMatchObject({ createdBy: 'original-author', revision: 1, syncVersion: 2, data: { text: 'Updated', extraContext: 'Preserve me' } });
-  });
-
-  it('supports a full typing batch and a subsequent batch without exceeding rule access limits', async () => {
-    const mutations: EventMutation[] = [];
-    for (let i = 0; i < 100; i++) mutations.push({ ...editNote(`Draft ${i}`), predecessor: mutations.at(-1)?.id ?? null });
-    await commitEventMutations(connection(), mutations);
-    await commitEventMutations(connection(), [{ ...editNote('Final draft'), predecessor: mutations.at(-1)!.id }]);
-    expect((await read(`${day}_note`))?.data.text).toBe('Final draft');
-    expect((await read(`${day}_note`))?.revision).toBe(2);
-  });
-
-  it('blocks old-client writes, legacy daily writes, altered receipts, viewers, and other families', async () => {
-    const mutation = editNote('Protected');
-    await commitEventMutations(connection(), [mutation]);
-    const ref = doc(connection().db, eventPath(mutation.eventId));
-    await assertFails(setDoc(ref, { data: { text: 'Old overwrite' }, updatedAt: Timestamp.now() }, { merge: true }));
-    await assertFails(setDoc(ref, { deletedAt: Timestamp.now() }, { merge: true }));
-    await assertFails(setDoc(doc(connection().db, 'users/alice/days/' + day), { notes: 'Legacy' }));
-    await assertFails(setDoc(doc(ref, 'mutations', mutation.id), { revision: 9 }, { merge: true }));
-    await assertFails(commitEventMutations(connection('viewer', 'maymay', 'caregiver'), [editNote('Not allowed', await read(mutation.eventId))]));
-    await assertFails(getDoc(doc(connection('outsider').db, eventPath(mutation.eventId))));
-    await assertFails(commitEventMutations(connection('outsider'), [editNote('Cross-family')]));
-    await assertFails(commitEventMutations(connection('pending'), [editNote('Unapproved')]));
-    expect((await read(mutation.eventId))?.data.text).toBe('Protected');
+describe('retired care paths', () => {
+  it('rejects writes to legacy events, medications, and daily summaries', async () => {
+    const patientDb = connection('alice').db;
+    await assertFails(setDoc(doc(patientDb, eventPath('old')), { type: 'note', data: { text: 'Old' } }));
+    await assertFails(setDoc(doc(patientDb, 'families/maymay/patients/maymay/medications/old'), { name: 'Old' }));
+    await assertFails(setDoc(doc(patientDb, 'families/maymay/patients/maymay/daySummaries/2026-09-30'), { localDate: '2026-09-30' }));
+    await assertFails(setDoc(doc(patientDb, eventPath('old') + '/mutations/old'), { revision: 1 }));
   });
 });
-
 describe('tracker and observation saves with real Firestore rules', () => {
   const tracker: CareMutation = {
     id: 'create-tracker', target: 'tracker', recordId: 'school', expectedRevision: null,
@@ -518,6 +400,8 @@ describe('tracker and observation saves with real Firestore rules', () => {
     const path = `families/maymay/patients/maymay/observations/school_${day}`;
     expect((await getDoc(doc(connection('bob').db, path))).data()?.value).toBe(false);
     await commitCareMutation(connection('bob'), answer('bob', true, 1));
+    expect((await readObservationWindow(connection('alice'), { start: day, end: day })).map(item => item.value)).toEqual([true]);
+    await expect(readObservationWindow(connection('outsider'), { start: day, end: day })).rejects.toThrow();
     await expect(commitCareMutation(connection('alice'), answer('alice', false, 1))).rejects.toBeInstanceOf(CareConflict);
     expect((await getDoc(doc(connection('alice').db, path))).data()).toMatchObject({
       value: true, revision: 2, trackerSnapshot: { title: 'School on time', kind: 'good' },

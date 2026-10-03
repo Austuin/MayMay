@@ -24,6 +24,18 @@ function openManage() {
 }
 
 describe('tracker UI preview with isolated mock data', () => {
+  it('shows the saved snapshot for an answered tracker after deletion or a schedule change', () => {
+    const data: TrackerData = { trackers: [{ id: 'old', title: 'New title', description: 'New description',
+      kind: 'mood', days: [2], deleted: true }], historicalTrackers: [{ id: 'old', title: 'Original title',
+      description: 'Original description', kind: 'mood', days: [4], historical: true }],
+      answers: { '2026-10-01': { old: 'Good' } }, spontaneous: [] };
+    render(<TodayTracker patientName="Sam" date="2026-10-01" onDateChange={() => undefined}
+      data={data} onChange={() => undefined} readOnly saveStatus="saved" />);
+    expect(screen.getByText('Original title')).toBeTruthy();
+    expect(screen.getByText('Original description')).toBeTruthy();
+    expect(screen.queryByText('New title')).toBeNull();
+    expect(screen.getByLabelText('Original title mood')).toHaveProperty('value', 'Good');
+  });
   it('starts with three unanswered examples and keeps No distinct from Unanswered', () => {
     render(<TrackerPreview />);
     fireEvent.change(screen.getByLabelText('Entry date'), { target: { value: '2026-10-01' } });

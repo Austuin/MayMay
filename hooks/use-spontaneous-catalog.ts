@@ -18,8 +18,8 @@ function toEvent(item: ReturnType<typeof observationFromDocument>): Spontaneous 
 }
 
 export function useSpontaneousCatalog(connection: FirebaseConnection | null, dayEvents: Spontaneous[], saveStatus: string) {
-  const owner = connection?.childId ? [connection.app.options.projectId, connection.dataGeneration,
-    connection.user.uid, connection.profile.familyId, connection.childId].join('|') : '';
+  const owner = connection?.patientId ? [connection.app.options.projectId, connection.dataGeneration,
+    connection.user.uid, connection.profile.familyId, connection.patientId].join('|') : '';
   const [state, setState] = useState<Catalog>(empty);
   const currentOwner = useRef(owner);
   currentOwner.current = owner;
@@ -30,11 +30,11 @@ export function useSpontaneousCatalog(connection: FirebaseConnection | null, day
   const previousStatus = useRef(saveStatus);
 
   const loadMore = useCallback(async () => {
-    if (!connection?.childId || loading.current || !alive.current || currentOwner.current !== owner) return;
+    if (!connection?.patientId || loading.current || !alive.current || currentOwner.current !== owner) return;
     loading.current = true;
     const requestVersion = version.current;
     try {
-      const collectionRef = careCollection(connection.db, connection.profile.familyId, connection.childId, 'observation');
+      const collectionRef = careCollection(connection.db, connection.profile.familyId, connection.patientId, 'observation');
       const parts: QueryConstraint[] = [orderBy('occurredAt', 'desc'), limit(100)];
       if (cursor.current) parts.push(startAfter(cursor.current));
       const snapshot = await getDocsFromServer(query(collectionRef, ...parts));
@@ -78,9 +78,9 @@ export function useSpontaneousCatalog(connection: FirebaseConnection | null, day
 
   const keys = [...new Set(dayEvents.map(item => spontaneousRepeatKey(item.kind, item.title)))].sort().join('|');
   useEffect(() => {
-    if (!connection?.childId || saveStatus !== 'saved' || !keys) return;
+    if (!connection?.patientId || saveStatus !== 'saved' || !keys) return;
     let active = true;
-    const ref = careCollection(connection.db, connection.profile.familyId, connection.childId, 'observation');
+    const ref = careCollection(connection.db, connection.profile.familyId, connection.patientId, 'observation');
     void Promise.all(keys.split('|').map(async key => {
       const snapshot = await getDocsFromServer(query(ref, where('repeatKey', '==', key)));
       return [key, snapshot.docs.filter(item => item.data().deletedAt == null).length] as const;

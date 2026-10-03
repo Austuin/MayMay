@@ -270,68 +270,22 @@ service cloud.firestore {
             allow update, delete: if false;
           }
         }
+        // Retired care paths remain readable for scoped recovery, but old clients cannot write.
         match /medications/{medicationId} {
           allow read: if permitted(familyId, patientId);
-          allow create, update: if primary(familyId) && permitted(familyId, patientId);
-          allow delete: if false;
+          allow write: if false;
         }
         match /events/{eventId} {
-          function hasSaveReceipt() {
-            let mutationId = request.resource.data.mutationId;
-            let receipt = getAfter(/databases/$(database)/documents/families/$(familyId)/patients/$(patientId)/events/$(eventId)/mutations/$(mutationId)).data;
-            return request.resource.data.syncVersion == 2
-              && request.resource.data.updatedBy == request.auth.uid
-              && request.resource.data.updatedAt == request.time
-              && receipt.createdBy == request.auth.uid
-              && receipt.createdAt == request.time
-              && receipt.commitId == mutationId
-              && receipt.revision == request.resource.data.revision;
-          }
           allow read: if permitted(familyId, patientId);
-          allow create: if canWrite(familyId, patientId) && hasSaveReceipt()
-            && request.resource.data.revision == 1
-            && request.resource.data.schemaVersion == 1
-            && request.resource.data.childId == patientId
-            && request.resource.data.createdBy == request.auth.uid
-            && request.resource.data.type in ['mood', 'trigger', 'meltdown', 'meal', 'bathroom', 'medication', 'sleep', 'health', 'routine', 'note']
-            && request.resource.data.localDate is string
-            && request.resource.data.occurredAt is timestamp
-            && request.resource.data.createdAt is timestamp
-            && request.resource.data.updatedAt is timestamp
-            && request.resource.data.data is map;
-          allow update: if canWrite(familyId, patientId) && hasSaveReceipt()
-            && request.resource.data.revision == resource.data.get('revision', 0) + 1
-            && request.resource.data.schemaVersion == 1
-            && request.resource.data.childId == resource.data.childId
-            && request.resource.data.type == resource.data.type
-            && request.resource.data.createdBy == resource.data.createdBy
-            && request.resource.data.createdAt == resource.data.createdAt
-            && request.resource.data.localDate == resource.data.localDate
-            && request.resource.data.occurredAt is timestamp
-            && request.resource.data.updatedAt is timestamp
-            && request.resource.data.data is map;
-          allow delete: if false;
+          allow write: if false;
           match /mutations/{mutationId} {
             allow read: if permitted(familyId, patientId);
-            allow create: if canWrite(familyId, patientId)
-              && request.resource.data.keys().hasOnly(['commitId', 'revision', 'createdBy', 'createdAt'])
-              && request.resource.data.createdBy == request.auth.uid
-              && request.resource.data.createdAt == request.time
-              && request.resource.data.revision is int
-              && getAfter(/databases/$(database)/documents/families/$(familyId)/patients/$(patientId)/events/$(eventId)).data.mutationId == request.resource.data.commitId
-              && getAfter(/databases/$(database)/documents/families/$(familyId)/patients/$(patientId)/events/$(eventId)).data.revision == request.resource.data.revision
-              && getAfter(/databases/$(database)/documents/families/$(familyId)/patients/$(patientId)/events/$(eventId)).data.updatedBy == request.auth.uid
-              && getAfter(/databases/$(database)/documents/families/$(familyId)/patients/$(patientId)/events/$(eventId)).data.updatedAt == request.time;
-            allow update, delete: if false;
+            allow write: if false;
           }
         }
         match /daySummaries/{dayId} {
           allow read: if permitted(familyId, patientId);
-          allow create, update: if canWrite(familyId, patientId)
-            && request.resource.data.schemaVersion == 1
-            && request.resource.data.childId == patientId
-            && request.resource.data.localDate == dayId;
-          allow delete: if false;
+          allow write: if false;
         }
       }
     }

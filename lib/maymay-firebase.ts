@@ -16,7 +16,7 @@ export type { PatientFields } from './maymay-schema';
 // The tracker still uses these labels internally. Firestore memberships are the authority.
 export type UserRole = 'pending' | 'master' | 'caregiver' | 'viewer';
 export type UserProfile = { familyId: string; role: UserRole; active: boolean; displayName?: string; email?: string };
-export type MayMayRuntimeConfig = { firebase: FirebaseWebConfig; familyId?: string; childId?: string };
+export type MayMayRuntimeConfig = { firebase: FirebaseWebConfig };
 export type FamilyOption = { familyId: string; name: string; role: FamilyRole; primaryId: string; patients: PatientRecord[] };
 export type FamilyRequest = { familyId: string; status: 'Pending' | 'Rejected' | 'Disabled' };
 export type FirebaseConnection = {
@@ -27,7 +27,7 @@ export type FirebaseConnection = {
   accountName: string;
   admin: AdminRecord | null;
   profile: UserProfile;
-  childId: string;
+  patientId: string;
   families: FamilyOption[];
   requests: FamilyRequest[];
   patient?: PatientRecord;
@@ -134,7 +134,7 @@ function chooseConnection(base: Pick<FirebaseConnection, 'app' | 'db' | 'user' |
       active: Boolean(family), displayName: base.accountName,
       email: base.user.email ?? undefined,
     },
-    childId: patient?.patientId ?? '', patient,
+    patientId: patient?.patientId ?? '', patient,
   };
 }
 
@@ -234,7 +234,7 @@ export async function createPatient(connection: FirebaseConnection, familyId: st
 
 export async function updatePatient(connection: FirebaseConnection, input: PatientFields) {
   const family = connection.families.find(item => item.familyId === connection.profile.familyId);
-  if (!family || family.role !== 'Primary' || !connection.childId) throw new Error('Only a Primary caregiver can edit this patient.');
+  if (!family || family.role !== 'Primary' || !connection.patientId) throw new Error('Only a Primary caregiver can edit this patient.');
   const values = patientValues(input);
   await assertDataGeneration(connection.db, connection.dataGeneration);
   const baseline = connection.patient;
@@ -242,7 +242,7 @@ export async function updatePatient(connection: FirebaseConnection, input: Patie
   const fields = ['name', 'birthdate', 'sex', 'ethnicity', 'autismLevel', 'supportNeeds'] as const;
   const changes = fields.filter(field => (values[field] ?? '') !== (baseline[field] ?? ''));
   if (!changes.length) return connection;
-  const ref = doc(connection.db, 'families', family.familyId, collections.patients, connection.childId);
+  const ref = doc(connection.db, 'families', family.familyId, collections.patients, connection.patientId);
   await runTransaction(connection.db, async transaction => {
     const snapshot = await transaction.get(ref);
     if (!snapshot.exists()) throw new Error('This patient is no longer available.');
@@ -254,7 +254,7 @@ export async function updatePatient(connection: FirebaseConnection, input: Patie
     for (const field of changes) patch[field] = values[field] ?? deleteField();
     transaction.update(ref, patch);
   });
-  return refreshFirebaseConnection(connection, { familyId: family.familyId, patientId: connection.childId });
+  return refreshFirebaseConnection(connection, { familyId: family.familyId, patientId: connection.patientId });
 }
 
 export async function updateAccountName(connection: FirebaseConnection, input: string) {
@@ -271,7 +271,7 @@ export async function updateAccountName(connection: FirebaseConnection, input: s
   // The users document is the shared display authority; Auth mirrors it for future sign-ins.
   try { await updateProfile(connection.user, { displayName: name }); }
   catch { /* Keep the saved name visible and retry the Auth mirror on the next connection. */ }
-  return refreshFirebaseConnection(connection, { familyId: connection.profile.familyId, patientId: connection.childId });
+  return refreshFirebaseConnection(connection, { familyId: connection.profile.familyId, patientId: connection.patientId });
 }
 
 export async function updateFamilyName(connection: FirebaseConnection, familyId: string, input: string) {
@@ -287,7 +287,7 @@ export async function updateFamilyName(connection: FirebaseConnection, familyId:
     if (snapshot.data().name !== family.name) throw new Error('The family name changed elsewhere. Reload and review it before saving.');
     transaction.update(ref, { name });
   });
-  return refreshFirebaseConnection(connection, { familyId, patientId: connection.childId });
+  return refreshFirebaseConnection(connection, { familyId, patientId: connection.patientId });
 }
 
 export async function resetFirebasePassword(config: FirebaseWebConfig, email: string) {
@@ -341,7 +341,6 @@ export async function connectFirebaseWithGoogle(config: FirebaseWebConfig): Prom
   return connectionFor(app, user);
 }
 
-export { desiredEvents } from './maymay-events';
 
 export async function disconnectFirebase(connection: FirebaseConnection) {
   await signOut(getAuth(connection.app));
