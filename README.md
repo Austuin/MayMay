@@ -1,136 +1,68 @@
 # MayMay
 
-MayMay is a private caregiver-facing tracker for morning, afternoon, and evening mood, routines, meals, sleep, medications, bathroom notes, triggers, and meltdown events.
+MayMay is a private, patient-scoped care tracker. Caregivers can answer recurring check-ins, record spontaneous events, review History, and see descriptive Insights. Account, family, and patient profiles are managed in Settings.
 
-The application has two surfaces:
+**Development status:** MayMay 1.0 is prepared on `DevBranch` for final review. The new rules have not been deployed to production, the live data has not been reset, and no release has been published. Production remains on `main` until a separate authorization. See [release and activation review](docs/release-reset.md).
 
-- The browser is the caregiver workspace. It contains only sign-in, tracking, history, and insights.
-- The host terminal owns Firebase configuration, database provisioning, account roles, and the web server. The Firebase Admin key never reaches a browser.
+## Host and browser
 
-## Start MayMay on the host computer
+The host serves the caregiver website and the `/api/family-invitations/*` endpoint. It reads the existing Firebase Web app configuration and activation state; ordinary startup does not provision records, publish rules, or reset data. It keeps the Firebase Admin JSON on the host and serves only the public Firebase Web configuration to browsers.
 
-Double-click `Start-MayMay.cmd`, or run:
+Start an installed copy with `Start-MayMay.cmd`, or start from a source checkout with:
 
 ```powershell
 npm run host
 ```
 
-The host terminal automatically:
-
-1. Finds the `maymaydata-a6fda` Firebase Admin key in the host user's Downloads folder.
-2. Verifies and provisions the Firestore structure.
-3. Retrieves the existing MayMay Firebase Web app configuration.
-4. Writes a browser-safe runtime configuration containing no Admin credentials.
-5. Starts MayMay for the host and other devices on the same local network at `http://maymay.local/`.
-
-If the Admin key is stored elsewhere:
+The host checks for the `maymaydata-a6fda` Admin key in its installed configuration or the host user's Downloads folder. To specify a different location:
 
 ```powershell
-npm run host -- --credentials 'C:\path\to\your-firebase-adminsdk.json'
+npm run host -- --credentials 'C:\path\to\firebase-admin.json'
 ```
 
-Keep the terminal open while MayMay is in use. Type `quit` to stop the website safely.
+Keep the terminal open while MayMay is in use. The website is served at `http://maymay.local/` when local name discovery is available; the terminal also prints numbered LAN addresses. If `system/data` is missing or invalid, a signed-in browser shows a setup/maintenance state. A release operator must complete the separately reviewed activation procedure.
 
-## Updates
+### Host commands
 
-The host terminal has one update action. Type `update` to check the latest GitHub release. When a newer release is found, the action changes to **Install update**; type `update` again to download it, verify its SHA-256 checksum, install it, and restart MayMay.
-
-Automatic installation is available in packaged MayMay installations. A source checkout reports the release link instead so Git-managed source files are never overwritten. The GitHub repository must be public for installed hosts to check releases without storing a GitHub credential.
-
-Pull requests and pushes to `main` run the automated input tests and TypeScript checks. A release is built and published only after those checks pass on `main`.
-
-For an older installed copy that predates the host update command, email `MayMay-Legacy-Updater.zip`. The recipient extracts it and double-clicks `Update-MayMay.cmd` on the host computer. This one-time updater finds MayMay, downloads and verifies the latest release, preserves the Firebase Admin key, installs the release, and restarts into the permanently updateable version.
-
-## Host terminal commands
-
-- `status` — Check Firestore and the web server.
-- `update` — Check for an update, or install it when one is available.
-- `users` — List Firebase Authentication users and their MayMay roles.
-- `master EMAIL_OR_UID` — Assign the Master role to an Authentication user.
-- `caregiver EMAIL_OR_UID` — Approve a registered caregiver account.
-- `viewer EMAIL_OR_UID` — Give a registered user read-only access.
-- `disable EMAIL_OR_UID` — Disable a user's MayMay access without deleting their account.
-- `provision` — Safely verify and update the database structure.
-- `restart` — Restart the caregiver website.
+- `status` — Show activation and web server status.
+- `users` — List Authentication users and their family counts.
+- `update` — Check for an update, or install a verified available update.
+- `restart` — Restart the website.
 - `quit` — Stop MayMay.
 
-## Add a caregiver
+Family roles, access grants, invitations, and member disabling are managed by a Primary in **Settings → Family Access**. The old host `master`, `caregiver`, `viewer`, `disable`, and `provision` commands are retired; they cannot write obsolete profile permissions.
 
-1. Give the caregiver `http://maymay.local/`, or the numbered fallback address printed by the host terminal.
-2. The caregiver selects **Continue with Google** and chooses their Google account. Firebase creates their login automatically the first time. **Create account** remains available for an email/password login.
-3. The new account receives a locked pending profile. It cannot see care records while waiting for a role.
-4. A signed-in Master opens **Settings** in MayMay. The role controls are visible only to Masters.
-5. Under **Waiting for a role**, select **Make caregiver** or **Make master** beside the new person.
-6. The new person selects **Check access again**, or signs in again, to enter MayMay.
+## Care records
 
-The host terminal's `users`, `caregiver EMAIL`, and `master EMAIL` commands remain available as administrator fallbacks.
+Each family can have multiple patients. Care access requires both an Active family membership and an explicit patient relationship. A Primary manages profiles and family access. Primary and Caregiver roles can manage Trackers and record Observations for permitted patients. A Viewer can read permitted patient information without changing it. Global Admin status does not grant family access.
 
-## Firebase requirements
+Today reads the selected patient's Trackers and selected local day's Observations. Recurring check-ins include mood, Yes/No, and nonnegative counters. Every answer saves as its own Observation; spontaneous events have separate IDs. Saved answers keep their original tracker title, description, and type, including after a tracker is changed or deleted. An unanswered field differs from No or zero.
 
-The `maymaydata-a6fda` project needs:
+History reads that same patient's Observations in 90-day ranges within the last three years, newest first. Opening a day uses the connected Today editor. Insights shows separate mood patterns, Yes/No totals, counter totals and averages over recorded days, and spontaneous-event counts. It makes no causal predictions or medication recommendations.
 
-- One registered Firebase Web app.
-- Google enabled under Firebase Authentication → Sign-in method.
-- `maymay.local` and any fallback address used for sign-in listed under Firebase Authentication → Settings → Authorized domains.
-- Email/Password enabled only if caregivers will use the email registration option.
-- A Firestore database.
-- The security rules from `firebase.rules` published in Firestore.
+Each care change is revision checked in a Firestore transaction and has a durable, patient-scoped draft. Conflicting changes require an explicit choice. A save receipt makes retries safe after a lost acknowledgement. Soft deletion preserves the historical record and its snapshot. The [data model](docs/data-model.md) describes records, paths, and access boundaries.
 
-The initial Master profile is created by the trusted host command:
+## Accounts and invitations
 
-```text
-users/YOUR_FIREBASE_AUTH_UID
-  familyId: maymay
-  role: master
-  active: true
+Accounts use Firebase Authentication with email/password or Google sign-in. The first caregiver creates a family and becomes its Primary. They add a patient; only Name is required. Optional birthdate, sex, ethnicity, autism support level, and communication/support needs can be added, edited, or cleared. Age is calculated rather than stored.
+
+A Primary creates a seven-day Family Code with selected patient scope. A verified-email caregiver requests access, then waits for Primary approval. The host invitation API verifies identity, current generation, membership, and patient scope. Pending, Rejected, and Disabled users have no care access. Codes are hashed in Firestore; browsers cannot write invitation or pending-approval records directly.
+
+## Updates and testing
+
+The installed host checks public GitHub releases, verifies the installer ZIP's SHA-256 checksum, then runs the updater. Pull requests and pushes to `DevBranch` and `main` run automated tests and typecheck. Release packaging occurs only after a successful push to `main`.
+
+```powershell
+npm test
+npm run typecheck
+npm run build
+npm run test:rules
 ```
 
-## Firestore structure
+The Firestore rules test uses the isolated `demo-maymay-test` emulator and requires Java 21 or later. No test writes care data to the live Firebase project. The production build may finish its static export and then hit a known Node/Vinext Windows shutdown assertion; the installer checks that fresh output exists before packaging.
 
-Every occurrence is stored as its own event document:
-
-```text
-families/maymay
-  children/maymay
-    events/{eventId}
-    medications/{medicationId}
-    daySummaries/{YYYY-MM-DD}
-
-users/{firebaseAuthenticationUid}
-system/schema
-```
-
-Event types include mood, trigger, meltdown, meal, bathroom, medication, sleep, health, routine, and note. Removing an event uses a soft-delete timestamp so the history remains recoverable. Daily summaries are derived caches; event documents are the source of truth.
-
-Caregiver devices load and cache a rolling three-year history. Older event documents remain in Firestore and can be retained for future archival or reporting without slowing the everyday app.
-
-Prediction inputs use consistent categories wherever practical: meal outcomes per meal, mood periods and tags, school status, sleep quality, bathroom status, medication status, Health status, and timestamped possible-trigger observations. Free-text fields remain optional context. Insights report personal associations and must not be treated as proof of causation or medical advice.
-
-## Automated tests
-
-Run `npm test` to exercise every daily tracking field, including possible-trigger and meltdown add/edit/remove flows. The tests mock Firebase, verify the saved local record and Firestore event mapping, then remove all temporary test data. They never write test records to the real MayMay database.
-
-Run `npm run test:rules` with Java 21 or later to test simultaneous caregivers and the actual Firestore rules in a local emulator using the isolated `demo-maymay-test` project. These checks also run in GitHub Actions. The test runner refuses to run without the local emulator. Java and Firebase test tools are development dependencies and are not included in the installed MayMay runtime.
-
-## Shared editing and the overwrite-safety update
-
-MayMay saves only the events changed by an input, never a replacement snapshot of the whole day. Each save checks the event's revision in a Firestore transaction. Unrelated edits from different caregivers are preserved. Concurrent changes to the same event show the shared value and the local draft for review; choose **Use saved version** or **Save my edit instead**. Choosing a draft still checks the version shown in the comparison, so another intervening change requires another review. An explicit removal affects only that event and preserves its tombstone.
-
-Unsent edits are saved before display, in a durable queue separated by Firebase project, account, family, and person. Failed saves retry while the app is open, on reconnection, or with **Retry sync**. Save receipts prevent a lost acknowledgement or a second tab from replaying an already committed edit. Sign-in never uploads cached whole days, and sign-out stops dispatching further queued writes. Edits already submitted to the server can finish for the original account; unsent edits remain available only when that account signs in again.
-
-This update does not rewrite existing care records. Legacy events gain revision metadata when first edited. Older unscoped browser caches are preserved under their original keys (`maymay.entries.v3`, `maymay.entries.v2`, and `trackerV11`) for recovery, but are never automatically assigned to an account or uploaded. A notice appears when such a cache exists. Do not clear browser storage if there may be unsynced notes from before the update; recover and compare them separately with shared history.
-
-Install through the normal host **update** command, then refresh caregiver browser tabs. The updated host publishes the accompanying rules before serving the updated app. Those rules require the new save protocol and block old-client event writes and legacy daily-record writes, including attempts to remove newer records. Keep the updated rules in place: reverting to an old host package that republishes old rules would remove this protection. No production provisioning or data migration is performed by the tests.
+The host package includes the static app, invitation API, final and maintenance rules, and the controlled reset tool. The [release procedure](docs/release-reset.md) details its dry run, exact approved deletion roots, backup, generation activation, and later approval boundary.
 
 ## Admin key safety
 
-The downloaded JSON file containing `private_key`, `client_email`, or `type: "service_account"` is a powerful server credential. Keep it on the host computer only.
-
-Never:
-
-- Paste it into the caregiver website.
-- Copy it to a phone or tablet.
-- Commit it to source control.
-- Send it to another caregiver.
-
-The host terminal retrieves Firebase's public Web configuration and serves only that browser-safe information.
+Keep the Firebase Admin JSON on the host computer only. Do not paste it into the caregiver website, copy it to a phone, commit it to source control, or send it to another caregiver.

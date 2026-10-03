@@ -1,169 +1,299 @@
 rules_version = '2';
-
 service cloud.firestore {
   match /databases/{database}/documents {
-    function signedIn() {
-      return request.auth != null;
+    function signedIn() { return request.auth != null; }
+    function currentGeneration() { return get(/databases/$(database)/documents/system/data).data.generation; }
+    function currentFamily(f) {
+      return get(family(f)).data.dataGeneration == currentGeneration();
     }
-
-    function profile() {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    function family(f) { return /databases/$(database)/documents/families/$(f); }
+    function member(f, u) { return /databases/$(database)/documents/families/$(f)/memberships/$(u); }
+    function patient(f, p) { return /databases/$(database)/documents/families/$(f)/patients/$(p); }
+    function access(f, p, u) { return /databases/$(database)/documents/families/$(f)/patients/$(p)/relationships/$(u); }
+    function active(f) {
+      return signedIn() && currentFamily(f) && exists(member(f, request.auth.uid))
+        && get(member(f, request.auth.uid)).data.status == 'Active';
     }
-
-    function isActiveMember(familyId) {
-      return signedIn()
-        && profile().active == true
-        && profile().familyId == familyId;
+    function primary(f) {
+      return active(f) && get(member(f, request.auth.uid)).data.role == 'Primary';
     }
-
-    function canTrack(familyId) {
-      return isActiveMember(familyId)
-        && profile().role in ['master', 'caregiver'];
+    function permitted(f, p) {
+      return active(f) && exists(patient(f, p)) && exists(access(f, p, request.auth.uid))
+        && get(access(f, p, request.auth.uid)).data.canAccess == true;
     }
-
-    function isMaster(familyId) {
-      return isActiveMember(familyId)
-        && profile().role == 'master';
+    function canWrite(f, p) {
+      return permitted(f, p)
+        && get(member(f, request.auth.uid)).data.role in ['Primary', 'Caregiver'];
     }
-
-    match /system/{document=**} {
-      allow read, write: if false;
+    function activePrimaryAfter(f, u) {
+      return existsAfter(member(f, u))
+        && getAfter(member(f, u)).data.status == 'Active'
+        && getAfter(member(f, u)).data.role == 'Primary';
     }
-
+    function validMembership(f, u) {
+      return request.resource.data.keys().hasOnly(['familyId', 'userId', 'role', 'status', 'requestedAt', 'dateJoined', 'approvedAt', 'approvedBy', 'reviewedAt', 'reviewedBy', 'patientIds', 'requesterName', 'requesterEmail', 'relationship', 'invitationId', 'proposedPatientIds', 'requesterEmailVerified'])
+        && request.resource.data.familyId == f && request.resource.data.userId == u
+        && request.resource.data.get('relationship', '') is string
+        && request.resource.data.get('relationship', '').size() <= 100
+        && request.resource.data.role in ['Primary', 'Caregiver', 'Viewer']
+        && request.resource.data.status in ['Pending', 'Active', 'Rejected', 'Disabled']
+        && request.resource.data.get('patientIds', []) is list;
+    }
+    function validPatient(f, p) {
+      return request.resource.data.keys().hasOnly(['patientId', 'familyId', 'name', 'dateCreated', 'dateUpdated', 'sex', 'ethnicity', 'autismLevel', 'birthdate', 'supportNeeds'])
+        && request.resource.data.patientId == p
+        && request.resource.data.familyId == f
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.name.size() <= 100
+        && request.resource.data.get('sex', '') in ['', 'Female', 'Male', 'Intersex', 'Unknown', 'Prefer not to say']
+        && request.resource.data.get('ethnicity', '') is string
+        && request.resource.data.get('ethnicity', '').size() <= 100
+        && request.resource.data.get('autismLevel', '') in ['', 'Level 1', 'Level 2', 'Level 3', 'Unknown']
+        && request.resource.data.get('birthdate', '') is string
+        && request.resource.data.get('supportNeeds', '') is string
+        && request.resource.data.get('supportNeeds', '').size() <= 1000;
+    }
+    function validAccess(f, p, u) {
+      return request.resource.data.keys().hasOnly(['familyId', 'patientId', 'userId', 'relationship', 'canAccess'])
+        && request.resource.data.familyId == f && request.resource.data.patientId == p
+        && request.resource.data.userId == u && request.resource.data.relationship is string
+        && request.resource.data.canAccess is bool;
+    }
+    match /system/data {
+      allow get: if signedIn();
+      allow list, write: if false;
+    }
+    match /system/{document=**} { allow read, write: if false; }
+    // Global admin status is independent of family roles. It grants no care access
+    // by itself. Only a trusted administrative process can assign or revoke it.
+    match /admins/{userId} {
+      allow get: if signedIn() && request.auth.uid == userId;
+      allow list, create, update, delete: if false;
+    }
+    // Identity is independent of family membership and grants no care access.
     match /users/{userId} {
-      allow read: if signedIn()
-        && (request.auth.uid == userId
-          || (isActiveMember(resource.data.familyId)
-            && isMaster(resource.data.familyId)));
-
-      // Registration creates a locked pending profile. It cannot read or change
-      // care information until a Master assigns an active role.
-      allow create: if (signedIn()
-          && request.auth.uid == userId
-          && request.resource.data.keys().hasOnly([
-            'schemaVersion', 'familyId', 'role', 'active', 'displayName',
-            'email', 'requestedAt', 'createdAt', 'updatedAt'
-          ])
-          && request.resource.data.schemaVersion == 1
-          && request.resource.data.familyId == 'maymay'
-          && request.resource.data.role == 'pending'
-          && request.resource.data.active == false
-          && request.resource.data.displayName is string
-          && request.resource.data.email == request.auth.token.email)
-        || (isMaster(request.resource.data.familyId)
-          && request.resource.data.role in ['master', 'caregiver', 'viewer']
-          && request.resource.data.active is bool);
-      allow update: if (signedIn()
-          && request.auth.uid == userId
-          && request.resource.data.familyId == resource.data.familyId
-          && request.resource.data.role == resource.data.role
-          && request.resource.data.active == resource.data.active)
-        || (isMaster(resource.data.familyId)
-          && request.resource.data.familyId == resource.data.familyId
-          && request.resource.data.role in ['master', 'caregiver', 'viewer']
-          && request.resource.data.active is bool);
+      allow read: if signedIn() && request.auth.uid == userId;
+      allow create: if signedIn() && request.auth.uid == userId
+        && request.resource.data.keys().hasOnly(['userId', 'name', 'email', 'dateCreated', 'dateUpdated', 'familyIds', 'dataGeneration'])
+        && request.resource.data.userId == userId
+        && request.resource.data.dataGeneration == currentGeneration()
+        && request.resource.data.name is string
+        && request.resource.data.email == request.auth.token.email
+        && request.resource.data.get('familyIds', []) is list;
+      allow update: if signedIn() && request.auth.uid == userId
+        && resource.data.dataGeneration == currentGeneration()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'dateUpdated', 'familyIds'])
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 100
+        && request.resource.data.get('familyIds', []) is list;
       allow delete: if false;
+      match /days/{dayId} { allow read, write: if false; }
     }
-
     match /families/{familyId} {
-      allow read: if isActiveMember(familyId);
-      allow create, update: if isMaster(familyId);
+      // Family creation and first Primary membership form one atomic batch.
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['familyId', 'name', 'creatorId', 'primaryId', 'dateCreated', 'dataGeneration'])
+        && request.resource.data.familyId == familyId
+        && request.resource.data.name is string
+        && request.resource.data.dataGeneration == currentGeneration()
+        && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 100
+        && request.resource.data.creatorId == request.auth.uid
+        && request.resource.data.primaryId == request.auth.uid
+        && activePrimaryAfter(familyId, request.auth.uid);
+      allow read: if active(familyId);
+      // The designated Primary must always remain active. A transfer must name
+      // another active Primary in the post-commit state.
+      allow update: if primary(familyId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'primaryId'])
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 100
+        && activePrimaryAfter(familyId, request.resource.data.primaryId);
       allow delete: if false;
-
-      match /children/{childId} {
-        allow read: if isActiveMember(familyId);
-        allow create, update: if isMaster(familyId);
+      match /memberships/{userId} {
+        allow read: if signedIn() && (request.auth.uid == userId || primary(familyId));
+        allow create: if validMembership(familyId, userId)
+          && (signedIn() && request.auth.uid == userId
+              && !exists(family(familyId))
+              && getAfter(family(familyId)).data.creatorId == userId
+              && getAfter(family(familyId)).data.primaryId == userId
+              && request.resource.data.role == 'Primary'
+              && request.resource.data.status == 'Active');
+        allow update: if validMembership(familyId, userId)
+          && primary(familyId)
+          && resource.data.status in ['Active', 'Disabled']
+          && request.resource.data.status in ['Active', 'Disabled']
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['role', 'status', 'patientIds'])
+          && request.resource.data.familyId == resource.data.familyId
+          && request.resource.data.userId == resource.data.userId
+          && (request.resource.data.role != 'Primary' || request.resource.data.status == 'Active')
+          && (request.resource.data.role != 'Primary'
+            || resource.data.role == 'Primary' || resource.data.status == 'Active')
+          && (getAfter(family(familyId)).data.primaryId != userId
+            || (request.resource.data.role == 'Primary' && request.resource.data.status == 'Active'));
+        // Membership removal uses trusted request cancellation or disables access.
         allow delete: if false;
-
-        match /medications/{medicationId} {
-          allow read: if isActiveMember(familyId);
-          allow create, update: if isMaster(familyId);
-          allow delete: if false;
+      }
+      // Only the host API may issue invitations or create/review/cancel join requests.
+      match /invitations/{inviteId} {
+        allow read, write: if false;
+      }
+      // Each patient has explicit per-user relationship/access records.
+      match /patients/{patientId} {
+        allow read: if permitted(familyId, patientId);
+        allow create: if primary(familyId) && validPatient(familyId, patientId)
+          && getAfter(access(familyId, patientId, request.auth.uid)).data.canAccess == true;
+        allow update: if primary(familyId) && permitted(familyId, patientId)
+          && validPatient(familyId, patientId)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'dateUpdated', 'sex', 'ethnicity', 'autismLevel', 'birthdate', 'supportNeeds']);
+        allow delete: if false;
+        match /relationships/{userId} {
+          allow read: if primary(familyId) || (signedIn() && request.auth.uid == userId && active(familyId));
+          allow create, update: if primary(familyId) && validAccess(familyId, patientId, userId)
+            && (permitted(familyId, patientId)
+              || (!exists(patient(familyId, patientId)) && userId == request.auth.uid))
+            && existsAfter(patient(familyId, patientId))
+            && exists(member(familyId, userId))
+            && (request.resource.data.canAccess == false
+              || getAfter(member(familyId, userId)).data.status == 'Active');
+          allow delete: if primary(familyId);
         }
-
-        match /events/{eventId} {
-          function hasSaveReceipt() {
-            let mutationId = request.resource.data.mutationId;
-            let receipt = getAfter(/databases/$(database)/documents/families/$(familyId)/children/$(childId)/events/$(eventId)/mutations/$(mutationId)).data;
-            return request.resource.data.syncVersion == 2
-              && request.resource.data.updatedBy == request.auth.uid
-              && request.resource.data.updatedAt == request.time
-              && receipt.createdBy == request.auth.uid
-              && receipt.createdAt == request.time
-              && receipt.commitId == mutationId
-              && receipt.revision == request.resource.data.revision;
-          }
-
-          allow read: if isActiveMember(familyId);
-          allow create: if canTrack(familyId)
-            && hasSaveReceipt()
-            && request.resource.data.revision == 1
-            && request.resource.data.schemaVersion == 1
-            && request.resource.data.childId == childId
+        function validAudit() {
+          return request.resource.data.familyId == familyId
+            && request.resource.data.patientId == patientId
+            && request.resource.data.dataGeneration == currentGeneration()
+            && request.resource.data.updatedBy == request.auth.uid
+            && request.resource.data.updatedAt == request.time
+            && request.resource.data.revision is int
+            && (request.resource.data.deletedAt == null || request.resource.data.deletedAt == request.time);
+        }
+        function newRecord() {
+          return request.resource.data.revision == 1
             && request.resource.data.createdBy == request.auth.uid
-            && request.resource.data.type in [
-              'mood',
-              'trigger',
-              'meltdown',
-              'meal',
-              'bathroom',
-              'medication',
-              'sleep',
-              'health',
-              'routine',
-              'note'
-            ]
-            && request.resource.data.localDate is string
-            && request.resource.data.occurredAt is timestamp
-            && request.resource.data.createdAt is timestamp
-            && request.resource.data.updatedAt is timestamp
-            && request.resource.data.data is map;
-          allow update: if canTrack(familyId)
-            && hasSaveReceipt()
-            && request.resource.data.revision == resource.data.get('revision', 0) + 1
-            && request.resource.data.schemaVersion == 1
-            && request.resource.data.childId == resource.data.childId
-            && request.resource.data.type == resource.data.type
+            && request.resource.data.createdAt == request.time
+            && request.resource.data.deletedAt == null;
+        }
+        function nextRevision() {
+          return request.resource.data.revision == resource.data.revision + 1
             && request.resource.data.createdBy == resource.data.createdBy
             && request.resource.data.createdAt == resource.data.createdAt
-            && request.resource.data.localDate == resource.data.localDate
-            && request.resource.data.occurredAt is timestamp
-            && request.resource.data.updatedAt is timestamp
-            && request.resource.data.data is map;
+            && request.resource.data.dataGeneration == resource.data.dataGeneration;
+        }
+        match /trackers/{trackerId} {
+          function validTracker() {
+            return request.resource.data.keys().hasOnly(['trackerId', 'familyId', 'patientId', 'dataGeneration', 'title', 'description', 'kind', 'days', 'createdBy', 'updatedBy', 'createdAt', 'updatedAt', 'revision', 'deletedAt', 'mutationId'])
+              && validAudit() && request.resource.data.trackerId == trackerId
+              && request.resource.data.title is string && request.resource.data.title.size() > 0 && request.resource.data.title.size() <= 100
+              && request.resource.data.description is string && request.resource.data.description.size() > 0 && request.resource.data.description.size() <= 240
+              && request.resource.data.kind in ['mood', 'good', 'difficult', 'checkin', 'count']
+              && request.resource.data.days is list && request.resource.data.days.size() > 0
+              && request.resource.data.days.hasOnly([0, 1, 2, 3, 4, 5, 6])
+              && request.resource.data.days.toSet().size() == request.resource.data.days.size();
+          }
+          allow read: if permitted(familyId, patientId);
+          // Starter definitions may be included in the atomic patient-creation batch.
+          allow create: if (canWrite(familyId, patientId)
+              || (primary(familyId) && !exists(patient(familyId, patientId))
+                && existsAfter(patient(familyId, patientId))
+                && getAfter(access(familyId, patientId, request.auth.uid)).data.canAccess == true))
+            && validTracker() && newRecord();
+          allow update: if canWrite(familyId, patientId) && resource.data.deletedAt == null && validTracker() && nextRevision()
+            && request.resource.data.kind == resource.data.kind;
           allow delete: if false;
-
           match /mutations/{mutationId} {
-            allow read: if isActiveMember(familyId);
-            allow create: if canTrack(familyId)
-              && request.resource.data.keys().hasOnly(['commitId', 'revision', 'createdBy', 'createdAt'])
+            allow read: if canWrite(familyId, patientId);
+            allow create: if canWrite(familyId, patientId)
+              && request.resource.data.keys().hasOnly(['revision', 'createdBy', 'createdAt'])
               && request.resource.data.createdBy == request.auth.uid
               && request.resource.data.createdAt == request.time
+              && getAfter(/databases/$(database)/documents/families/$(familyId)/patients/$(patientId)/trackers/$(trackerId)).data.updatedBy == request.auth.uid
+              && getAfter(/databases/$(database)/documents/families/$(familyId)/patients/$(patientId)/trackers/$(trackerId)).data.updatedAt == request.time
               && request.resource.data.revision is int
-              && getAfter(/databases/$(database)/documents/families/$(familyId)/children/$(childId)/events/$(eventId)).data.mutationId == request.resource.data.commitId
-              && getAfter(/databases/$(database)/documents/families/$(familyId)/children/$(childId)/events/$(eventId)).data.revision == request.resource.data.revision
-              && getAfter(/databases/$(database)/documents/families/$(familyId)/children/$(childId)/events/$(eventId)).data.updatedBy == request.auth.uid
-              && getAfter(/databases/$(database)/documents/families/$(familyId)/children/$(childId)/events/$(eventId)).data.updatedAt == request.time;
+              && getAfter(/databases/$(database)/documents/families/$(familyId)/patients/$(patientId)/trackers/$(trackerId)).data.mutationId == mutationId
+              && getAfter(/databases/$(database)/documents/families/$(familyId)/patients/$(patientId)/trackers/$(trackerId)).data.revision == request.resource.data.revision;
             allow update, delete: if false;
           }
         }
-
-        match /daySummaries/{dayId} {
-          allow read: if isActiveMember(familyId);
-          allow create, update: if canTrack(familyId)
-            && request.resource.data.schemaVersion == 1
-            && request.resource.data.childId == childId
-            && request.resource.data.localDate == dayId;
+        match /observations/{observationId} {
+          function validAnswer() {
+            let d = request.resource.data;
+            return d.trackerSnapshot is map
+              && d.trackerSnapshot.keys().hasOnly(['title', 'description', 'kind'])
+              && d.trackerSnapshot.title is string && d.trackerSnapshot.description is string
+              && ((d.trackerSnapshot.kind == 'mood' && d.value in ['Bad', 'Poor', 'Neutral', 'OK', 'Good'])
+                || (d.trackerSnapshot.kind == 'count' && d.value is int && d.value >= 0)
+                || (d.trackerSnapshot.kind in ['good', 'difficult', 'checkin'] && d.value is bool));
+          }
+          function validObservation() {
+            let d = request.resource.data;
+            return d.keys().hasOnly(['observationId', 'familyId', 'patientId', 'dataGeneration', 'localDate', 'occurredAt', 'kind', 'trackerId', 'trackerSnapshot', 'value', 'title', 'note', 'details', 'repeatKey', 'createdBy', 'updatedBy', 'createdAt', 'updatedAt', 'revision', 'deletedAt', 'mutationId'])
+              && validAudit() && d.observationId == observationId
+              && d.localDate is string && d.localDate.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+              && d.occurredAt is timestamp
+              && d.title is string && d.title.size() > 0 && d.title.size() <= 100
+              && d.note is string && d.note.size() <= 4000
+              && d.details is map
+              && d.details.keys().hasOnly(['duration', 'intensity', 'trigger', 'earlySigns', 'aggression', 'whatHelped'])
+              && d.details.get('duration', '') is string && d.details.get('intensity', '') is string
+              && d.details.get('trigger', '') is string && d.details.get('earlySigns', '') is string
+              && d.details.get('aggression', '') is string && d.details.get('whatHelped', '') is string
+              && d.details.get('duration', '').size() <= 1000 && d.details.get('intensity', '').size() <= 1000
+              && d.details.get('trigger', '').size() <= 1000 && d.details.get('earlySigns', '').size() <= 1000
+              && d.details.get('aggression', '').size() <= 1000 && d.details.get('whatHelped', '').size() <= 1000
+              && ((d.kind == 'answer' && d.trackerId is string && !('repeatKey' in d) && validAnswer()
+                  && observationId == d.trackerId + '_' + d.localDate)
+                || (d.kind in ['good', 'difficult', 'meltdown', 'other'] && d.trackerId == null && d.trackerSnapshot == null && d.value == null
+                  && d.repeatKey is string && d.repeatKey.size() > 5 && d.repeatKey.size() <= 115));
+          }
+          function matchesTracker() {
+            let d = request.resource.data;
+            let t = get(/databases/$(database)/documents/families/$(familyId)/patients/$(patientId)/trackers/$(d.trackerId)).data;
+            return t.deletedAt == null && t.dataGeneration == currentGeneration()
+              && d.trackerSnapshot == {'title': t.title, 'description': t.description, 'kind': t.kind};
+          }
+          allow read: if permitted(familyId, patientId);
+          allow create: if canWrite(familyId, patientId) && validObservation() && newRecord()
+            && (request.resource.data.kind != 'answer' || matchesTracker());
+          allow update: if canWrite(familyId, patientId) && validObservation() && nextRevision()
+            && (request.resource.data.kind == resource.data.kind
+              || (resource.data.kind in ['good', 'difficult', 'meltdown', 'other']
+                && request.resource.data.kind in ['good', 'difficult', 'meltdown', 'other']))
+            && request.resource.data.trackerId == resource.data.trackerId
+            && request.resource.data.trackerSnapshot == resource.data.trackerSnapshot
+            && request.resource.data.localDate == resource.data.localDate;
           allow delete: if false;
+          match /mutations/{mutationId} {
+            allow read: if canWrite(familyId, patientId);
+            allow create: if canWrite(familyId, patientId)
+              && request.resource.data.keys().hasOnly(['revision', 'createdBy', 'createdAt'])
+              && request.resource.data.createdBy == request.auth.uid
+              && request.resource.data.createdAt == request.time
+              && getAfter(/databases/$(database)/documents/families/$(familyId)/patients/$(patientId)/observations/$(observationId)).data.updatedBy == request.auth.uid
+              && getAfter(/databases/$(database)/documents/families/$(familyId)/patients/$(patientId)/observations/$(observationId)).data.updatedAt == request.time
+              && request.resource.data.revision is int
+              && getAfter(/databases/$(database)/documents/families/$(familyId)/patients/$(patientId)/observations/$(observationId)).data.mutationId == mutationId
+              && getAfter(/databases/$(database)/documents/families/$(familyId)/patients/$(patientId)/observations/$(observationId)).data.revision == request.resource.data.revision;
+            allow update, delete: if false;
+          }
+        }
+        // Retired care paths remain readable for scoped recovery, but old clients cannot write.
+        match /medications/{medicationId} {
+          allow read: if permitted(familyId, patientId);
+          allow write: if false;
+        }
+        match /events/{eventId} {
+          allow read: if permitted(familyId, patientId);
+          allow write: if false;
+          match /mutations/{mutationId} {
+            allow read: if permitted(familyId, patientId);
+            allow write: if false;
+          }
+        }
+        match /daySummaries/{dayId} {
+          allow read: if permitted(familyId, patientId);
+          allow write: if false;
         }
       }
-    }
-
-    // Old daily snapshots remain readable for recovery, but cannot overwrite history.
-    match /users/{userId}/days/{dayId} {
-      allow read: if signedIn()
-        && request.auth.uid == userId
-        && isActiveMember('maymay');
-      allow write: if false;
     }
   }
 }

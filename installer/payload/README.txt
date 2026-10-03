@@ -16,16 +16,20 @@ The Firebase Admin JSON is never included in the installer. Use
 Set-Firebase-Key.cmd to select the key after installation. It stays on the host
 computer and must never be sent to caregivers or placed in the web browser.
 
-REGISTER A CAREGIVER
---------------------
-The caregiver opens http://maymay.local/ and selects Continue with Google. Their
-Google account is registered automatically the first time. After registration,
-enter "users" in the host terminal, then approve the account with:
-  caregiver caregiver@example.com
-The new account cannot read care information until the host approves it.
+FAMILY SETUP AND ACCESS
+-----------------------
+After release activation, a caregiver signs in and creates their family and
+patient. The creator becomes the Primary caregiver. Other caregivers request
+access with a Family Code and a verified email. The Primary reviews requests,
+roles, and patient assignments in Settings > Family Access. The host terminal
+does not assign family roles.
 
 Google must be enabled under Firebase Authentication > Sign-in method, and
 maymay.local must be listed under Authentication > Settings > Authorized domains.
+
+If MayMay displays a setup or maintenance state, ask the release operator to
+complete the separately reviewed activation procedure. Ordinary host startup
+does not modify Firestore data or publish rules.
 
 OFFLINE INSTALLATION
 --------------------

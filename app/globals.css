@@ -1,6 +1,8 @@
 @import 'tailwindcss';
 @import 'tw-animate-css';
-@import 'shadcn/tailwind.css';
+@custom-variant data-horizontal (&:where([data-orientation="horizontal"]));
+@custom-variant data-vertical (&:where([data-orientation="vertical"]));
+@custom-variant data-active (&:where([data-state="active"], [data-active]:not([data-active="false"])));
 
 @custom-variant dark (&:is(.dark *));
 

@@ -65,7 +65,7 @@ jobs:
       - name: Build offline update package
         shell: pwsh
         run: |
-          $version = "0.2.${env:GITHUB_RUN_NUMBER}"
+          $version = "1.0.${env:GITHUB_RUN_NUMBER}"
           .\installer\Build-OfflineInstaller.ps1 -Version $version
           .\installer\Build-LegacyUpdater.ps1
 
@@ -74,7 +74,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $version = "0.2.${env:GITHUB_RUN_NUMBER}"
+          $version = "1.0.${env:GITHUB_RUN_NUMBER}"
           $tag = "v$version"
           $zip = "release\MayMay-Offline-Installer-v$version.zip"
           $checksum = "$zip.sha256"
