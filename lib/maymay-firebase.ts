@@ -9,7 +9,7 @@ import {
 } from 'firebase/firestore';
 import type { FirebaseWebConfig } from './maymay-types';
 import type { FamilyRole, PatientRecord } from './maymay-access';
-import { collections, patientValues, type PatientFields, type UserRecord } from './maymay-schema';
+import { collections, patientValues, type AdminRecord, type PatientFields, type UserRecord } from './maymay-schema';
 import { assertDataGeneration, readDataConfiguration } from './maymay-database';
 export type { PatientFields } from './maymay-schema';
 
@@ -25,6 +25,7 @@ export type FirebaseConnection = {
   user: User;
   dataGeneration: string;
   accountName: string;
+  admin: AdminRecord | null;
   profile: UserProfile;
   childId: string;
   families: FamilyOption[];
@@ -117,7 +118,7 @@ async function familyOptions(db: Firestore, userId: string, familyIds: string[])
   return { families, requests };
 }
 
-function chooseConnection(base: Pick<FirebaseConnection, 'app' | 'db' | 'user' | 'families' | 'requests' | 'dataGeneration' | 'accountName'>, preferred?: { familyId?: string; patientId?: string }): FirebaseConnection {
+function chooseConnection(base: Pick<FirebaseConnection, 'app' | 'db' | 'user' | 'families' | 'requests' | 'dataGeneration' | 'accountName' | 'admin'>, preferred?: { familyId?: string; patientId?: string }): FirebaseConnection {
   let stored: { familyId?: string; patientId?: string } = {};
   try { if (typeof localStorage !== 'undefined') stored = JSON.parse(localStorage.getItem(selectionKey(base.app, base.user, base.dataGeneration)) || '{}'); } catch { /* Ignore invalid device selection. */ }
   const choice = preferred ?? stored;
@@ -140,8 +141,10 @@ function chooseConnection(base: Pick<FirebaseConnection, 'app' | 'db' | 'user' |
 async function connectionFrom(db: Firestore, app: FirebaseApp, user: User, preferred?: { familyId?: string; patientId?: string }) {
   const { generation } = await readDataConfiguration(db);
   const identity = await ensureIdentity(db, user, generation);
+  const adminSnapshot = await getDoc(doc(db, collections.admins, user.uid));
+  const admin = adminSnapshot.exists() ? adminSnapshot.data() as AdminRecord : null;
   const options = await familyOptions(db, user.uid, Array.isArray(identity.familyIds) ? identity.familyIds : []);
-  return chooseConnection({ app, db, user, ...options, dataGeneration: generation, accountName: identity.name }, preferred);
+  return chooseConnection({ app, db, user, ...options, dataGeneration: generation, accountName: identity.name, admin }, preferred);
 }
 
 async function connectionFor(app: FirebaseApp, user: User, preferred?: { familyId?: string; patientId?: string }) {

@@ -8,6 +8,7 @@ Stages 1–2 define the production records and connect account/family/patient se
 | --- | --- |
 | Release metadata | `system/data` |
 | User | `users/{UserId}` |
+| Admin | `admins/{UserId}` |
 | Family | `families/{FamId}` |
 | Family membership | `families/{FamId}/memberships/{UserId}` |
 | Patient | `families/{FamId}/patients/{PatId}` |
@@ -21,6 +22,8 @@ The TypeScript field definitions are in `lib/maymay-schema.ts`. Database field n
 Family creation atomically writes the Family, its Active Primary membership, and the user's family index. Patient creation atomically writes the Patient, the creator's relationship/access record, and membership patient index. Other caregivers are not automatically granted access to a new patient. Identity creation uses a transaction so simultaneous first sign-ins do not overwrite a profile or its family index.
 
 Family and patient indexes are discovery hints only. Server rules require Active membership and an explicit patient relationship with `canAccess: true` before permitting care-record access.
+
+Admins are global account records with `userId`, `status` (Active/Disabled), `assignedBy`, `dateCreated`, and `dateUpdated`. An admin may also be a Primary, Caregiver, or Viewer in any family, or have no family membership. Sign-in loads the account's admin record independently. There is no self-assignment UI, and browser writes to Admins are denied. Only trusted administration can assign or revoke status. This stage grants no additional permissions; later admin abilities must receive explicit server authorization. Admin assignments should be preserved alongside Authentication accounts during the family/care-data reset.
 
 Trackers define the schedule/input. Observations hold the recorded answer or spontaneous event. Daily observation IDs combine tracker ID and local date to prevent duplicate answers. Answer observations keep the original tracker title, description, and kind; edits cannot change that snapshot or move a record to another day. No and zero are actual values; no record means unanswered. Revisions and immutable creator information protect updates. Deletion is represented by `deletedAt`; physical deletion is denied.
 

@@ -1,7 +1,7 @@
 /** MayMay 1.0 application records. Authentication credentials never belong here. */
 export const DATA_SCHEMA_VERSION = 1;
 export const collections = {
-  users: 'users', families: 'families', memberships: 'memberships',
+  users: 'users', admins: 'admins', families: 'families', memberships: 'memberships',
   patients: 'patients', relationships: 'relationships', invitations: 'invitations',
   trackers: 'trackers', observations: 'observations',
 } as const;
@@ -16,6 +16,11 @@ export type AutismLevel = 'Level 1' | 'Level 2' | 'Level 3' | 'Unknown';
 export type UserRecord = {
   userId: string; name: string; email: string; familyIds: string[];
   dataGeneration: string; dateCreated: unknown; dateUpdated: unknown;
+};
+/** Global account status, independent of membership in any family. */
+export type AdminRecord = {
+  userId: string; status: 'Active' | 'Disabled'; assignedBy: string;
+  dateCreated: unknown; dateUpdated: unknown;
 };
 export type FamilyRecord = {
   familyId: string; name: string; creatorId: string; primaryId: string;
