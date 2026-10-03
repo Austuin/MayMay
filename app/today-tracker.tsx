@@ -42,29 +42,6 @@ const kinds: { value: TrackerKind; label: string; hint: string }[] = [
   { value: 'checkin', label: 'Check-in', hint: 'Yes or No' },
   { value: 'count', label: 'Counter', hint: 'A number' },
 ];
-const examples: Tracker[] = [
-  {
-    id: 'morning-mood',
-    kind: 'mood',
-    title: 'Morning Mood',
-    description: 'How was the morning?',
-    days: everyDay,
-  },
-  {
-    id: 'bowel-movements',
-    kind: 'count',
-    title: 'Bowel Movements',
-    description: 'How many times did they go today?',
-    days: everyDay,
-  },
-  {
-    id: 'school-on-time',
-    kind: 'good',
-    title: 'Went to School on Time',
-    description: 'Did they arrive on time?',
-    days: [1, 2, 3, 4, 5],
-  },
-];
 const blankDraft = (): TrackerDraft => ({
   kind: 'checkin',
   title: '',
@@ -88,20 +65,6 @@ export type TrackerData = {
   answers: Record<string, Record<string, Answer>>;
   spontaneous: Spontaneous[];
 };
-const emptyData: TrackerData = { trackers: examples, answers: {}, spontaneous: [] };
-
-// Stage 2 drafts deliberately stay in memory. Stage 6 will supply persistence.
-export function useTrackerDrafts(scope: string) {
-  const [drafts, setDrafts] = useState<Record<string, TrackerData>>({});
-  return {
-    data: drafts[scope] ?? emptyData,
-    update: (change: (current: TrackerData) => TrackerData) => setDrafts(current => ({
-      ...current, [scope]: change(current[scope] ?? emptyData),
-    })),
-    clear: () => setDrafts({}),
-  };
-}
-
 export function TodayTracker({ patientName, date, onDateChange, data, onChange, readOnly = false }: {
   patientName: string;
   date: string;
@@ -263,9 +226,6 @@ export function TodayTracker({ patientName, date, onDateChange, data, onChange, 
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
-      <p role="note" className="rounded-xl border bg-muted/50 p-3 text-sm text-muted-foreground">
-        Preview · Answers stay in this session only. Refreshing or signing out clears them. They are not shared with other caregivers.
-      </p>
       {readOnly && <p className="text-sm text-muted-foreground">View-only access. A caregiver can record answers.</p>}
         {screen === 'day' && (
           <>

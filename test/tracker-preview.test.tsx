@@ -6,7 +6,7 @@ import {
   within,
 } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import TrackerPreview from '@/app/tracker-preview/page';
+import TrackerPreview from './fixtures/tracker-preview';
 
 beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date(2026, 9, 7, 12)); });
 afterEach(() => {

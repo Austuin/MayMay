@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, type FormEvent } from 'react';
-import { differenceInYears, parseISO } from 'date-fns';
+import { patientAge, type Sex, type AutismLevel } from '@/lib/maymay-schema';
 import { localDateValue } from '@/lib/maymay-types';
 import type { PatientFields } from '@/lib/maymay-firebase';
 
@@ -33,9 +33,9 @@ export function PatientForm({
       await onSave({
         name: name.trim(),
         ...(supportNeeds.trim() ? { supportNeeds: supportNeeds.trim() } : {}),
-        ...(sex ? { sex } : {}),
+        ...(sex ? { sex: sex as Sex } : {}),
         ...(ethnicity.trim() ? { ethnicity: ethnicity.trim() } : {}),
-        ...(autismLevel ? { autismLevel } : {}),
+        ...(autismLevel ? { autismLevel: autismLevel as AutismLevel } : {}),
         ...(birthdate ? { birthdate } : {}),
       });
       if (resetOnSave) {
@@ -61,9 +61,9 @@ export function PatientForm({
         <label className="block text-sm font-medium">Birthdate
           <input className={inputStyle} type="date" max={localDateValue()} value={birthdate} onChange={event => setBirthdate(event.target.value)} />
         </label>
-        {birthdate && <p className="self-center text-sm text-muted-foreground">Age: {differenceInYears(new Date(), parseISO(birthdate))}</p>}
+        {birthdate && <p className="self-center text-sm text-muted-foreground">Age: {patientAge(birthdate)}</p>}
         <label className="block text-sm font-medium">Sex
-          <select className={inputStyle} value={sex} onChange={event => setSex(event.target.value)}>
+          <select className={inputStyle} value={sex} onChange={event => setSex(event.target.value as Sex | '')}>
             <option value="">Not specified</option>
             <option value="Female">Female</option>
             <option value="Male">Male</option>
@@ -73,7 +73,7 @@ export function PatientForm({
           </select>
         </label>
         <label className="block text-sm font-medium">Autism support level
-          <select className={inputStyle} value={autismLevel} onChange={event => setAutismLevel(event.target.value)}>
+          <select className={inputStyle} value={autismLevel} onChange={event => setAutismLevel(event.target.value as AutismLevel | '')}>
             <option value="">Not specified</option>
             <option value="Level 1">Level 1</option>
             <option value="Level 2">Level 2</option>

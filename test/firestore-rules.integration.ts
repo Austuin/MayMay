@@ -17,9 +17,9 @@ import type { EventRecord } from '../lib/maymay-events';
 
 let env: RulesTestEnvironment;
 const day = '2026-09-30';
-const eventPath = (id: string) => `families/maymay/children/maymay/events/${id}`;
+const eventPath = (id: string) => `families/maymay/patients/maymay/events/${id}`;
 function connection(uid = 'alice', familyId = 'maymay', role = 'caregiver', childId = 'maymay') {
-  return { db: env.authenticatedContext(uid).firestore(), user: { uid }, profile: { familyId, role, active: true }, childId } as unknown as FirebaseConnection;
+  return { dataGeneration: 'test-generation', accountName: uid, db: env.authenticatedContext(uid).firestore(), user: { uid }, profile: { familyId, role, active: true }, childId } as unknown as FirebaseConnection;
 }
 async function read(id: string, uid = 'alice'): Promise<EventRecord | null> {
   const snapshot = await getDoc(doc(connection(uid).db, eventPath(id)));
@@ -39,6 +39,7 @@ beforeAll(async () => {
 beforeEach(async () => {
   await env.clearFirestore();
   await env.withSecurityRulesDisabled(async context => {
+    await setDoc(doc(context.firestore(), 'system/data'), { schemaVersion: 1, generation: 'test-generation' });
     for (const [uid, familyId, role, status] of [
       ['alice', 'maymay', 'Caregiver', 'Active'], ['bob', 'maymay', 'Caregiver', 'Active'],
       ['viewer', 'maymay', 'Viewer', 'Active'], ['outsider', 'other-family', 'Caregiver', 'Active'],
@@ -47,11 +48,11 @@ beforeEach(async () => {
     ] as const) {
       await setDoc(doc(context.firestore(), 'families', familyId, 'memberships', uid), { familyId, userId: uid, role, status });
     }
-    await setDoc(doc(context.firestore(), 'families/maymay'), { familyId: 'maymay', name: 'MayMay', creatorId: 'owner', primaryId: 'owner' });
-    await setDoc(doc(context.firestore(), 'families/other-family'), { familyId: 'other-family', name: 'Other', creatorId: 'other-owner', primaryId: 'other-owner' });
-    await setDoc(doc(context.firestore(), 'families/maymay/children/maymay'), { familyId: 'maymay', patientId: 'maymay', name: 'Patient' });
+    await setDoc(doc(context.firestore(), 'families/maymay'), { familyId: 'maymay', name: 'MayMay', creatorId: 'owner', primaryId: 'owner', dataGeneration: 'test-generation' });
+    await setDoc(doc(context.firestore(), 'families/other-family'), { familyId: 'other-family', name: 'Other', creatorId: 'other-owner', primaryId: 'other-owner', dataGeneration: 'test-generation' });
+    await setDoc(doc(context.firestore(), 'families/maymay/patients/maymay'), { familyId: 'maymay', patientId: 'maymay', name: 'Patient' });
     for (const uid of ['alice', 'bob', 'viewer', 'owner']) {
-      await setDoc(doc(context.firestore(), 'families/maymay/children/maymay/access', uid), { familyId: 'maymay', patientId: 'maymay', userId: uid, relationship: '', canAccess: true });
+      await setDoc(doc(context.firestore(), 'families/maymay/patients/maymay/relationships', uid), { familyId: 'maymay', patientId: 'maymay', userId: uid, relationship: '', canAccess: true });
     }
   });
 });
@@ -67,24 +68,24 @@ describe('multi-family access foundation', () => {
   it('creates an account family and patient, edits optional details, and switches between families', async () => {
     const creatorDb = env.authenticatedContext('setup-user', { email: 'setup@example.test' }).firestore();
     await assertSucceeds(setDoc(doc(creatorDb, 'users/setup-user'), {
-      userId: 'setup-user', name: 'Setup user', email: 'setup@example.test', familyIds: [],
+      userId: 'setup-user', name: 'Setup user', email: 'setup@example.test', familyIds: [], dataGeneration: 'test-generation',
     }));
     const session = {
       app: { options: { projectId: 'demo-maymay-test' } }, db: creatorDb,
       user: { uid: 'setup-user', email: 'setup@example.test', displayName: 'Setup user' },
-      profile: { familyId: '', role: 'pending', active: false }, childId: '', families: [],
+      dataGeneration: 'test-generation', accountName: 'Test user', profile: { familyId: '', role: 'pending', active: false }, childId: '', families: [],
     } as unknown as FirebaseConnection;
     const first = await createFamily(session, 'First family');
     expect(first.profile.role).toBe('master');
     expect(first.families.map(item => item.name)).toContain('First family');
     const patient = await createPatient(first, first.profile.familyId, {
-      name: 'Sam', age: 8, sex: 'Female', ethnicity: 'Optional example',
+      name: 'Sam', sex: 'Female', ethnicity: 'Optional example',
       autismLevel: 'Level 2', birthdate: '2018-01-02', supportNeeds: 'Allow extra response time',
     });
     expect(patient.patient?.name).toBe('Sam');
     expect(patient.patient?.ethnicity).toBe('Optional example');
     expect(patient.patient?.supportNeeds).toBe('Allow extra response time');
-    const patientRef = doc(creatorDb, 'families', first.profile.familyId, 'children', patient.childId);
+    const patientRef = doc(creatorDb, 'families', first.profile.familyId, 'patients', patient.childId);
     expect((await getDoc(patientRef)).data()?.birthdate).toBe('2018-01-02');
     const edited = await updatePatient(patient, { name: 'Sam Updated', sex: 'Female' });
     expect(edited.patient?.name).toBe('Sam Updated');
@@ -114,31 +115,31 @@ describe('multi-family access foundation', () => {
   it('requires active membership and explicit patient access for reads and writes across families', async () => {
     await env.withSecurityRulesDisabled(async context => {
       await setDoc(doc(context.firestore(), eventPath('private')), { type: 'note', data: { text: 'Private' } });
-      await setDoc(doc(context.firestore(), 'families/other-family/children/other-patient'), { familyId: 'other-family', patientId: 'other-patient', name: 'Other patient' });
-      await setDoc(doc(context.firestore(), 'families/other-family/children/other-patient/events/private'), { type: 'note', data: { text: 'Other private' } });
-      await setDoc(doc(context.firestore(), 'families/maymay/children/second'), { familyId: 'maymay', patientId: 'second', name: 'Second' });
-      await setDoc(doc(context.firestore(), 'families/maymay/children/second/events/private'), { type: 'note', data: { text: 'Second private' } });
+      await setDoc(doc(context.firestore(), 'families/other-family/patients/other-patient'), { familyId: 'other-family', patientId: 'other-patient', name: 'Other patient' });
+      await setDoc(doc(context.firestore(), 'families/other-family/patients/other-patient/events/private'), { type: 'note', data: { text: 'Other private' } });
+      await setDoc(doc(context.firestore(), 'families/maymay/patients/second'), { familyId: 'maymay', patientId: 'second', name: 'Second' });
+      await setDoc(doc(context.firestore(), 'families/maymay/patients/second/events/private'), { type: 'note', data: { text: 'Second private' } });
     });
     for (const uid of ['pending', 'outsider']) {
       await assertFails(getDoc(doc(db(uid), eventPath('private'))));
       await assertFails(setDoc(doc(db(uid), eventPath('private')), { data: { text: 'Overwrite' } }, { merge: true }));
     }
-    await assertFails(getDoc(doc(db('alice'), 'families/maymay/children/second/events/private')));
+    await assertFails(getDoc(doc(db('alice'), 'families/maymay/patients/second/events/private')));
     await assertFails(commitEventMutations(connection('alice', 'maymay', 'caregiver', 'second'), [editNote('Denied')]));
-    await assertFails(getDoc(doc(db('alice'), 'families/other-family/children/other-patient/events/private')));
+    await assertFails(getDoc(doc(db('alice'), 'families/other-family/patients/other-patient/events/private')));
     await assertSucceeds(getDoc(doc(db('alice'), eventPath('private'))));
     await assertFails(setDoc(doc(db('viewer'), eventPath('private')), { data: { text: 'Overwrite' } }, { merge: true }));
-    await assertSucceeds(setDoc(doc(db('owner'), 'families/maymay/children/second/access/alice'), patientGrant('maymay', 'second', 'alice')));
-    await assertSucceeds(getDoc(doc(db('alice'), 'families/maymay/children/second/events/private')));
-    await assertSucceeds(deleteDoc(doc(db('owner'), 'families/maymay/children/second/access/alice')));
-    await assertFails(getDoc(doc(db('alice'), 'families/maymay/children/second/events/private')));
+    await assertSucceeds(setDoc(doc(db('owner'), 'families/maymay/patients/second/relationships/alice'), patientGrant('maymay', 'second', 'alice')));
+    await assertSucceeds(getDoc(doc(db('alice'), 'families/maymay/patients/second/events/private')));
+    await assertSucceeds(deleteDoc(doc(db('owner'), 'families/maymay/patients/second/relationships/alice')));
+    await assertFails(getDoc(doc(db('alice'), 'families/maymay/patients/second/events/private')));
   });
 
   it('blocks Pending, Rejected, and Disabled memberships even when an access grant remains', async () => {
     for (const status of ['Pending', 'Rejected', 'Disabled']) {
       await env.withSecurityRulesDisabled(context =>
         setDoc(doc(context.firestore(), 'families/maymay/memberships/alice'), membership('maymay', 'alice', 'Caregiver', status)));
-      await assertFails(getDoc(doc(db('alice'), 'families/maymay/children/maymay')));
+      await assertFails(getDoc(doc(db('alice'), 'families/maymay/patients/maymay')));
       await assertFails(getDoc(doc(db('alice'), eventPath('private'))));
       await assertFails(commitEventMutations(connection('alice'), [editNote('Denied')]));
     }
@@ -149,12 +150,12 @@ describe('multi-family access foundation', () => {
     await env.withSecurityRulesDisabled(context =>
       setDoc(doc(context.firestore(), 'families/other-family/memberships/alice'), membership('other-family', 'alice')));
     await env.withSecurityRulesDisabled(async context => {
-      await setDoc(doc(context.firestore(), 'families/other-family/children/other-patient'), { familyId: 'other-family', patientId: 'other-patient', name: 'Other patient' });
-      await setDoc(doc(context.firestore(), 'families/other-family/children/other-patient/events/private'), { type: 'note' });
+      await setDoc(doc(context.firestore(), 'families/other-family/patients/other-patient'), { familyId: 'other-family', patientId: 'other-patient', name: 'Other patient' });
+      await setDoc(doc(context.firestore(), 'families/other-family/patients/other-patient/events/private'), { type: 'note' });
     });
-    await assertFails(getDoc(doc(db('alice'), 'families/other-family/children/other-patient/events/private')));
-    await assertSucceeds(setDoc(doc(db('other-owner'), 'families/other-family/children/other-patient/access/alice'), patientGrant('other-family', 'other-patient', 'alice')));
-    await assertSucceeds(getDoc(doc(db('alice'), 'families/other-family/children/other-patient/events/private')));
+    await assertFails(getDoc(doc(db('alice'), 'families/other-family/patients/other-patient/events/private')));
+    await assertSucceeds(setDoc(doc(db('other-owner'), 'families/other-family/patients/other-patient/relationships/alice'), patientGrant('other-family', 'other-patient', 'alice')));
+    await assertSucceeds(getDoc(doc(db('alice'), 'families/other-family/patients/other-patient/events/private')));
   });
 
   it('enforces approved promotions and preserves the last active Primary on the server', async () => {
@@ -178,7 +179,7 @@ describe('multi-family access foundation', () => {
     await assertSucceeds(updateDoc(ownerRef, { role: 'Viewer' }));
     await assertFails(updateDoc(bobRef, { status: 'Disabled' }));
     await assertFails(updateDoc(bobRef, { role: 'Caregiver' }));
-    await assertFails(updateDoc(familyRef, { primaryId: 'owner' }));
+    await assertFails(updateDoc(familyRef, { primaryId: 'owner', dataGeneration: 'test-generation' }));
     await assertFails(updateDoc(doc(db('alice'), 'families/maymay/memberships/bob'), { role: 'Viewer' }));
   });
 });
@@ -189,9 +190,9 @@ describe('Family Code requests and Primary approval', () => {
       app: { options: { projectId: 'demo-maymay-test' } },
       db: env.authenticatedContext('owner', { email: 'owner@example.test' }).firestore(),
       user: { uid: 'owner', email: 'owner@example.test', displayName: 'Owner' },
-      profile: { familyId: 'maymay', role: 'master', active: true },
+      dataGeneration: 'test-generation', accountName: 'Test user', profile: { familyId: 'maymay', role: 'master', active: true },
       childId: 'maymay',
-      families: [{ familyId: 'maymay', name: 'MayMay', role: 'Primary', primaryId: 'owner', patients: [{ familyId: 'maymay', patientId: 'maymay', name: 'Patient' }] }],
+      families: [{ familyId: 'maymay', name: 'MayMay', role: 'Primary', primaryId: 'owner', dataGeneration: 'test-generation', patients: [{ familyId: 'maymay', patientId: 'maymay', name: 'Patient' }] }],
       requests: [],
     } as unknown as FirebaseConnection;
   }
@@ -200,12 +201,12 @@ describe('Family Code requests and Primary approval', () => {
     const email = `${uid}@example.test`;
     const firestore = env.authenticatedContext(uid, { email }).firestore();
     await assertSucceeds(setDoc(doc(firestore, 'users', uid), {
-      userId: uid, name: uid, email, familyIds: [],
+      userId: uid, name: uid, email, familyIds: [], dataGeneration: 'test-generation',
     }));
     return {
       app: { options: { projectId: 'demo-maymay-test' } }, db: firestore,
       user: { uid, email, displayName: uid },
-      profile: { familyId: '', role: 'pending', active: false },
+      dataGeneration: 'test-generation', accountName: 'Test user', profile: { familyId: '', role: 'pending', active: false },
       childId: '', families: [], requests: [],
     } as unknown as FirebaseConnection;
   }
@@ -222,9 +223,9 @@ describe('Family Code requests and Primary approval', () => {
     expect((await listPendingRequests(owner)).map(item => item.userId)).toContain('joining');
     expect((await listPendingRequests(owner))[0].relationship).toBe('Sibling');
     await assertFails(getDoc(doc(joining.db, 'families/maymay')));
-    await assertFails(getDoc(doc(joining.db, 'families/maymay/children/maymay')));
+    await assertFails(getDoc(doc(joining.db, 'families/maymay/patients/maymay')));
     await assertFails(updateDoc(doc(joining.db, 'families/maymay/memberships/joining'), { status: 'Active' }));
-    await assertFails(setDoc(doc(joining.db, 'families/maymay/children/maymay/access/joining'), {
+    await assertFails(setDoc(doc(joining.db, 'families/maymay/patients/maymay/relationships/joining'), {
       familyId: 'maymay', patientId: 'maymay', userId: 'joining', relationship: '', canAccess: true,
     }));
     await rotateFamilyCode(owner, 'maymay');
@@ -235,8 +236,8 @@ describe('Family Code requests and Primary approval', () => {
     expect(approved?.status).toBe('Active');
     expect(approved?.joinSecret).toBeUndefined();
     expect(approved?.patientIds).toEqual(['maymay']);
-    expect((await getDoc(doc(joining.db, 'families/maymay/children/maymay/access/joining'))).data()?.relationship).toBe('Sibling');
-    await assertSucceeds(getDoc(doc(joining.db, 'families/maymay/children/maymay')));
+    expect((await getDoc(doc(joining.db, 'families/maymay/patients/maymay/relationships/joining'))).data()?.relationship).toBe('Sibling');
+    await assertSucceeds(getDoc(doc(joining.db, 'families/maymay/patients/maymay')));
     expect((await listPendingRequests(owner)).some(item => item.userId === 'joining')).toBe(false);
   });
 
@@ -246,7 +247,7 @@ describe('Family Code requests and Primary approval', () => {
     const code = await rotateFamilyCode(owner, 'maymay');
     await requestFamilyAccess(joining, code);
     await rejectFamilyRequest(owner, 'maymay', 'reapplicant');
-    await assertFails(getDoc(doc(joining.db, 'families/maymay/children/maymay')));
+    await assertFails(getDoc(doc(joining.db, 'families/maymay/patients/maymay')));
     expect((await getDoc(doc(joining.db, 'families/maymay/memberships/reapplicant'))).data()?.joinSecret).toBeUndefined();
     await requestFamilyAccess(joining, code);
     const pending = await cancelFamilyRequest(joining, 'maymay');
@@ -261,16 +262,16 @@ describe('Family Code requests and Primary approval', () => {
     const code = await rotateFamilyCode(owner, 'maymay');
     await requestFamilyAccess(joining, code);
     await approveFamilyRequest(owner, 'maymay', 'viewing', 'Viewer', ['maymay']);
-    await assertSucceeds(getDoc(doc(joining.db, 'families/maymay/children/maymay')));
-    await assertFails(setDoc(doc(joining.db, 'families/maymay/children/maymay/daySummaries/2026-10-01'), {
+    await assertSucceeds(getDoc(doc(joining.db, 'families/maymay/patients/maymay')));
+    await assertFails(setDoc(doc(joining.db, 'families/maymay/patients/maymay/daySummaries/2026-10-01'), {
       schemaVersion: 1, childId: 'maymay', localDate: '2026-10-01',
     }));
     const member = (await listFamilyMembers(owner, 'maymay')).find(item => item.userId === 'viewing')!;
     await disableFamilyMember(owner, 'maymay', member);
-    await assertFails(getDoc(doc(joining.db, 'families/maymay/children/maymay')));
-    expect((await getDoc(doc(owner.db, 'families/maymay/children/maymay/access/viewing'))).exists()).toBe(false);
+    await assertFails(getDoc(doc(joining.db, 'families/maymay/patients/maymay')));
+    expect((await getDoc(doc(owner.db, 'families/maymay/patients/maymay/relationships/viewing'))).exists()).toBe(false);
     await restoreFamilyMember(owner, 'maymay', { ...member, status: 'Disabled', patientIds: [] }, ['maymay']);
-    await assertSucceeds(getDoc(doc(joining.db, 'families/maymay/children/maymay')));
+    await assertSucceeds(getDoc(doc(joining.db, 'families/maymay/patients/maymay')));
   });
 });
 
