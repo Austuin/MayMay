@@ -36,6 +36,7 @@ import { FamilyAccess } from './family-access';
 import { JoinFamilyForm } from './join-family-form';
 import { PatientForm } from './patient-form';
 import { PasswordResetForm } from './password-reset-form';
+import { AccountProfile, FamilyProfile, PatientProfileReadOnly } from './profile-settings';
 import { TodayTracker } from './today-tracker';
 import {
   connectFirebase,
@@ -50,6 +51,8 @@ import {
   restoreFirebase,
   selectFamilyPatient,
   updatePatient,
+  updateAccountName,
+  updateFamilyName,
   type FirebaseConnection,
   type MayMayRuntimeConfig,
   type PatientFields,
@@ -336,6 +339,18 @@ export default function HomePage() {
     if (!connection) return;
     useConnection(await updatePatient(connection, fields));
     setFamilyMessage('Patient details saved.');
+  }
+
+  async function handleUpdateAccountName(name: string) {
+    const connection = connectionRef.current;
+    if (!connection) return;
+    useConnection(await updateAccountName(connection, name));
+  }
+
+  async function handleUpdateFamilyName(familyId: string, name: string) {
+    const connection = connectionRef.current;
+    if (!connection) return;
+    useConnection(await updateFamilyName(connection, familyId, name));
   }
 
   function handleSelectFamilyPatient(familyId: string, patientId = '') {
@@ -697,19 +712,18 @@ export default function HomePage() {
           <div className="settings-grid mt-5">
             <Card>
               <CardHeader><CardTitle className="text-xl font-bold">Your account</CardTitle></CardHeader>
-              <CardContent>
-                <div className="current-access-card">
-                  <span><ShieldCheck /></span>
-                  <div><b>{firebaseConnection?.accountName || firebaseConnection?.user.displayName || caregiverEmail || 'MayMay account'}</b><p>{caregiverEmail}</p></div>
-                  <strong>{currentRole === 'master' ? 'Primary' : currentRole === 'caregiver' ? 'Caregiver' : 'Viewer'}</strong>
-                </div>
-              </CardContent>
+              <CardContent>{firebaseConnection && <AccountProfile key={`${firebaseConnection.user.uid}:${firebaseConnection.accountName}`}
+                connection={firebaseConnection} onSave={handleUpdateAccountName}
+                onResetPassword={email => resetFirebasePassword(runtimeConfig!.firebase, email)}
+                onSignOut={() => { void handleSignOut(); }} />}</CardContent>
             </Card>
 
             <Card>
               <CardHeader><CardTitle className="text-xl font-bold">Families</CardTitle></CardHeader>
               <CardContent className="space-y-4">
-                <p className="text-sm text-muted-foreground">You are viewing {selectedFamily?.name}. Use the family and patient selectors above to switch.</p>
+                {selectedFamily && <FamilyProfile key={`${selectedFamily.familyId}:${selectedFamily.name}`} family={selectedFamily}
+                  onSave={name => handleUpdateFamilyName(selectedFamily.familyId, name)} />}
+                {firebaseConnection && firebaseConnection.families.length > 1 && <p className="text-sm text-muted-foreground">Use the family selector above to switch families.</p>}
                 <form className="flex flex-wrap items-end gap-3" onSubmit={async event => {
                   event.preventDefault();
                   setFamilyBusy(true);
@@ -726,13 +740,14 @@ export default function HomePage() {
             </Card>
             {firebaseConnection && <JoinFamilyForm connection={firebaseConnection} onChanged={useConnection} />}
             {isMaster && firebaseConnection && <FamilyAccess connection={firebaseConnection} onChanged={() => { void refreshFamilyContext(); }} />}
-            {isMaster && selectedFamily && <Card>
+            {selectedFamily && firebaseConnection?.patient && <Card>
               <CardHeader><CardTitle className="text-xl font-bold">Patient details</CardTitle></CardHeader>
               <CardContent className="space-y-6">
-                {firebaseConnection?.patient && <PatientForm key={firebaseConnection.patient.patientId} action="Save patient details" initial={firebaseConnection.patient} onSave={handleUpdatePatient} />}
-                <details className="border-t pt-4"><summary className="cursor-pointer font-medium">Add another patient</summary>
+                {isMaster ? <PatientForm key={`${firebaseConnection.patient.patientId}:${String(firebaseConnection.patient.dateUpdated)}`} action="Save patient details" initial={firebaseConnection.patient} onSave={handleUpdatePatient} />
+                  : <PatientProfileReadOnly patient={firebaseConnection.patient} />}
+                {isMaster && <details className="border-t pt-4"><summary className="cursor-pointer font-medium">Add another patient</summary>
                   <div className="mt-4"><PatientForm key={selectedFamily.familyId + '-new'} action="Add patient" resetOnSave onSave={fields => handleCreatePatient(selectedFamily.familyId, fields)} /></div>
-                </details>
+                </details>}
               </CardContent>
             </Card>}
           </div>

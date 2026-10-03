@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => {
     const patient = { patientId: 'sam', familyId: 'family-a', name: 'Sam' };
     return {
       app: { options: { projectId: 'demo-test' } }, db: {},
+      accountName: 'Caregiver',
       user: { uid: 'caregiver', email: 'caregiver@example.test', displayName: 'Caregiver' },
       profile: { familyId: 'family-a', role: 'caregiver', active: true },
       childId: 'sam', patient, requests: [],

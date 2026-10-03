@@ -2,10 +2,11 @@
 
 import { useState, type FormEvent } from 'react';
 
-export function PasswordResetForm({ initialEmail, onReset, onBack }: {
+export function PasswordResetForm({ initialEmail, onReset, onBack, backLabel = 'Back to sign in' }: {
   initialEmail: string;
   onReset: (email: string) => Promise<void>;
   onBack: () => void;
+  backLabel?: string;
 }) {
   const [email, setEmail] = useState(initialEmail);
   const [busy, setBusy] = useState(false);
@@ -36,6 +37,6 @@ export function PasswordResetForm({ initialEmail, onReset, onBack }: {
         {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
         <button disabled={busy} className="h-12 w-full rounded-md bg-primary px-4 text-primary-foreground disabled:opacity-50">{busy ? 'Sending…' : 'Send reset link'}</button>
       </form>}
-    <button type="button" disabled={busy} onClick={onBack} className="text-sm underline">Back to sign in</button>
+    <button type="button" disabled={busy} onClick={onBack} className="text-sm underline">{backLabel}</button>
   </div>;
 }

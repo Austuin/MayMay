@@ -8,7 +8,7 @@ import { assertFails, assertSucceeds, initializeTestEnvironment, type RulesTestE
 import { collection, deleteDoc, doc, getDoc, getDocs, serverTimestamp, setDoc, Timestamp, updateDoc, type Firestore } from 'firebase/firestore';
 import type { FirebaseConnection } from '../lib/maymay-firebase';
 import { createFamilyFoundation } from '../lib/maymay-access';
-import { createFamily, createPatient, selectFamilyPatient, updatePatient } from '../lib/maymay-firebase';
+import { createFamily, createPatient, selectFamilyPatient, updateAccountName, updateFamilyName, updatePatient } from '../lib/maymay-firebase';
 import {
   approveFamilyRequest, cancelFamilyRequest, disableFamilyMember, getFamilyInvitation,
   listFamilyMembers, listPendingRequests, rejectFamilyRequest, requestFamilyAccess,
@@ -105,7 +105,11 @@ describe('multi-family access foundation', () => {
     const first = await createFamily(session, 'First family');
     expect(first.profile.role).toBe('master');
     expect(first.families.map(item => item.name)).toContain('First family');
-    const patient = await createPatient(first, first.profile.familyId, {
+    const accountRenamed = await updateAccountName(first, 'Renamed caregiver');
+    expect(accountRenamed.accountName).toBe('Renamed caregiver');
+    await expect(updateAccountName(first, 'Stale name')).rejects.toThrow(/changed elsewhere/);
+    await assertFails(updateDoc(doc(creatorDb, 'users/setup-user'), { name: '' }));
+    const patient = await createPatient(accountRenamed, first.profile.familyId, {
       name: 'Sam', sex: 'Female', ethnicity: 'Optional example',
       autismLevel: 'Level 2', birthdate: '2018-01-02', supportNeeds: 'Allow extra response time',
     });
@@ -122,8 +126,18 @@ describe('multi-family access foundation', () => {
     expect((await getDoc(patientRef)).data()?.ethnicity).toBeUndefined();
     expect((await getDoc(patientRef)).data()?.birthdate).toBeUndefined();
     expect((await getDoc(patientRef)).data()?.supportNeeds).toBeUndefined();
+    await expect(updatePatient(patient, { name: 'Conflicting name' })).rejects.toThrow(/changed elsewhere/);
+    await updateDoc(patientRef, { ethnicity: 'Concurrent detail' });
+    const preserved = await updatePatient(edited, { name: 'Sam Updated', sex: 'Female', supportNeeds: 'New support' });
+    expect(preserved.patient?.name).toBe('Sam Updated');
+    expect(preserved.patient?.ethnicity).toBe('Concurrent detail');
+    expect(preserved.patient?.supportNeeds).toBe('New support');
+    const renamed = await updateFamilyName(preserved, first.profile.familyId, 'Renamed family');
+    expect(renamed.families.find(item => item.familyId === first.profile.familyId)?.name).toBe('Renamed family');
+    await expect(updateFamilyName(first, first.profile.familyId, 'Stale family edit')).rejects.toThrow(/changed elsewhere/);
+    await assertFails(updateDoc(doc(creatorDb, 'families', first.profile.familyId), { name: '' }));
     await assertFails(updateDoc(patientRef, { supportNeeds: 123 }));
-    const second = await createFamily(edited, 'Second family');
+    const second = await createFamily(renamed, 'Second family');
     expect(second.families).toHaveLength(2);
     expect(second.childId).toBe('');
     const switched = selectFamilyPatient(second, first.profile.familyId, patient.childId);

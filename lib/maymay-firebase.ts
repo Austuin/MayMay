@@ -5,7 +5,7 @@ import {
 } from 'firebase/auth';
 import {
   arrayUnion, collection, deleteField, doc, getDoc, getFirestore, serverTimestamp,
-  runTransaction, updateDoc, writeBatch, type Firestore,
+  runTransaction, writeBatch, type Firestore,
 } from 'firebase/firestore';
 import type { FirebaseWebConfig } from './maymay-types';
 import type { FamilyRole, PatientRecord } from './maymay-access';
@@ -141,6 +141,10 @@ function chooseConnection(base: Pick<FirebaseConnection, 'app' | 'db' | 'user' |
 async function connectionFrom(db: Firestore, app: FirebaseApp, user: User, preferred?: { familyId?: string; patientId?: string }) {
   const { generation } = await readDataConfiguration(db);
   const identity = await ensureIdentity(db, user, generation);
+  if (user.displayName !== identity.name) {
+    try { await updateProfile(user, { displayName: identity.name }); }
+    catch { /* The users document remains the display authority. Retry on the next connection. */ }
+  }
   const adminSnapshot = await getDoc(doc(db, collections.admins, user.uid));
   const admin = adminSnapshot.exists() ? adminSnapshot.data() as AdminRecord : null;
   const options = await familyOptions(db, user.uid, Array.isArray(identity.familyIds) ? identity.familyIds : []);
@@ -233,13 +237,57 @@ export async function updatePatient(connection: FirebaseConnection, input: Patie
   if (!family || family.role !== 'Primary' || !connection.childId) throw new Error('Only a Primary caregiver can edit this patient.');
   const values = patientValues(input);
   await assertDataGeneration(connection.db, connection.dataGeneration);
-  await updateDoc(doc(connection.db, 'families', family.familyId, collections.patients, connection.childId), {
-    ...values,
-    sex: values.sex ?? deleteField(),
-    ethnicity: values.ethnicity ?? deleteField(), autismLevel: values.autismLevel ?? deleteField(),
-    birthdate: values.birthdate ?? deleteField(), supportNeeds: values.supportNeeds ?? deleteField(), dateUpdated: serverTimestamp(),
+  const baseline = connection.patient;
+  if (!baseline) throw new Error('Select a patient before editing.');
+  const fields = ['name', 'birthdate', 'sex', 'ethnicity', 'autismLevel', 'supportNeeds'] as const;
+  const changes = fields.filter(field => (values[field] ?? '') !== (baseline[field] ?? ''));
+  if (!changes.length) return connection;
+  const ref = doc(connection.db, 'families', family.familyId, collections.patients, connection.childId);
+  await runTransaction(connection.db, async transaction => {
+    const snapshot = await transaction.get(ref);
+    if (!snapshot.exists()) throw new Error('This patient is no longer available.');
+    const current = snapshot.data() as PatientRecord;
+    if (changes.some(field => (current[field] ?? '') !== (baseline[field] ?? ''))) {
+      throw new Error('Patient details changed elsewhere. Reload and review the latest details before saving.');
+    }
+    const patch: Record<string, unknown> = { dateUpdated: serverTimestamp() };
+    for (const field of changes) patch[field] = values[field] ?? deleteField();
+    transaction.update(ref, patch);
   });
   return refreshFirebaseConnection(connection, { familyId: family.familyId, patientId: connection.childId });
+}
+
+export async function updateAccountName(connection: FirebaseConnection, input: string) {
+  const name = input.trim();
+  if (!name || name.length > 100) throw new Error('Enter your name using up to 100 characters.');
+  await assertDataGeneration(connection.db, connection.dataGeneration);
+  const ref = doc(connection.db, collections.users, connection.user.uid);
+  await runTransaction(connection.db, async transaction => {
+    const snapshot = await transaction.get(ref);
+    if (!snapshot.exists() || snapshot.data().dataGeneration !== connection.dataGeneration) throw new Error('Account setup changed. Sign in again.');
+    if (snapshot.data().name !== connection.accountName) throw new Error('Your name changed elsewhere. Reload and review it before saving.');
+    transaction.update(ref, { name, dateUpdated: serverTimestamp() });
+  });
+  // The users document is the shared display authority; Auth mirrors it for future sign-ins.
+  try { await updateProfile(connection.user, { displayName: name }); }
+  catch { /* Keep the saved name visible and retry the Auth mirror on the next connection. */ }
+  return refreshFirebaseConnection(connection, { familyId: connection.profile.familyId, patientId: connection.childId });
+}
+
+export async function updateFamilyName(connection: FirebaseConnection, familyId: string, input: string) {
+  const family = connection.families.find(item => item.familyId === familyId);
+  if (!family || family.role !== 'Primary') throw new Error('Only a Primary caregiver can edit the family name.');
+  const name = input.trim();
+  if (!name || name.length > 100) throw new Error('Enter a family name of up to 100 characters.');
+  await assertDataGeneration(connection.db, connection.dataGeneration);
+  const ref = doc(connection.db, collections.families, familyId);
+  await runTransaction(connection.db, async transaction => {
+    const snapshot = await transaction.get(ref);
+    if (!snapshot.exists()) throw new Error('This family is no longer available.');
+    if (snapshot.data().name !== family.name) throw new Error('The family name changed elsewhere. Reload and review it before saving.');
+    transaction.update(ref, { name });
+  });
+  return refreshFirebaseConnection(connection, { familyId, patientId: connection.childId });
 }
 
 export async function resetFirebasePassword(config: FirebaseWebConfig, email: string) {
