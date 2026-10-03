@@ -12,20 +12,21 @@ import {
   Trash2,
 } from 'lucide-react';
 import { createEventId, localDateValue } from '@/lib/maymay-types';
-import type { TrackerAnswer, TrackerDefinition, TrackerKind } from '@/lib/maymay-schema';
+import { spontaneousRepeatKey, trackerValues, type MeltdownDetails, type TrackerAnswer, type TrackerDefinition, type TrackerKind } from '@/lib/maymay-schema';
 
 type Answer = TrackerAnswer;
 type Tracker = TrackerDefinition & {
   id: string;
   deleted?: boolean;
 };
-type Spontaneous = {
+export type Spontaneous = {
   id: string;
   date: string;
   kind: 'good' | 'difficult' | 'meltdown' | 'other';
   title: string;
   note: string;
   time: string;
+  details?: MeltdownDetails;
 };
 type TrackerDraft = TrackerDefinition;
 
@@ -61,7 +62,8 @@ export type TrackerData = {
   answers: Record<string, Record<string, Answer>>;
   spontaneous: Spontaneous[];
 };
-export function TodayTracker({ patientName, date, onDateChange, data, onChange, readOnly = false, saveStatus, saveMessage }: {
+export function TodayTracker({ patientName, date, onDateChange, data, onChange, readOnly = false, saveStatus, saveMessage,
+  previousEvents = [], repeatCounts, hasMorePreviousEvents = false, onLoadMoreEvents }: {
   patientName: string;
   date: string;
   onDateChange: (date: string) => void;
@@ -70,6 +72,10 @@ export function TodayTracker({ patientName, date, onDateChange, data, onChange, 
   readOnly?: boolean;
   saveStatus?: 'loading' | 'saving' | 'saved' | 'pending' | 'error';
   saveMessage?: string;
+  previousEvents?: Spontaneous[];
+  repeatCounts?: Record<string, number>;
+  hasMorePreviousEvents?: boolean;
+  onLoadMoreEvents?: () => void;
 }) {
   const { trackers, answers, spontaneous } = data;
   const today = localDateValue();
@@ -96,6 +102,8 @@ export function TodayTracker({ patientName, date, onDateChange, data, onChange, 
   }
   const [screen, setScreen] = useState<'day' | 'manage' | 'form'>('day');
   const [draft, setDraft] = useState<TrackerDraft>(blankDraft);
+  const [formError, setFormError] = useState('');
+  const [scheduleConfirmed, setScheduleConfirmed] = useState(true);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -105,6 +113,9 @@ export function TodayTracker({ patientName, date, onDateChange, data, onChange, 
   const [unexpectedTitle, setUnexpectedTitle] = useState('');
   const [unexpectedNote, setUnexpectedNote] = useState('');
   const [unexpectedTime, setUnexpectedTime] = useState('');
+  const [unexpectedDetails, setUnexpectedDetails] = useState<MeltdownDetails>({});
+  const [editingUnexpectedId, setEditingUnexpectedId] = useState<string | null>(null);
+  const [unexpectedError, setUnexpectedError] = useState('');
   const [lastRemoved, setLastRemoved] = useState<Spontaneous | null>(null);
 
   const active = trackers.filter((item) => !item.deleted);
@@ -118,25 +129,23 @@ export function TodayTracker({ patientName, date, onDateChange, data, onChange, 
   const dayEvents = spontaneous.filter((item) => item.date === date);
   const repeated = [
     ...new Map(
-      spontaneous.map((item) => [
-        `${item.kind}:${item.title.trim().toLowerCase()}`,
+      spontaneous.filter(item => item.date === date).map((item) => [
+        spontaneousRepeatKey(item.kind, item.title),
         item,
       ]),
     ).entries(),
   ]
     .filter(
       ([key]) =>
-        spontaneous.filter(
-          (item) => `${item.kind}:${item.title.trim().toLowerCase()}` === key,
-        ).length >= 4,
+        (repeatCounts?.[key] ?? spontaneous.filter(item => spontaneousRepeatKey(item.kind, item.title) === key).length) >= 4,
     )
     .map(([, item]) => item)
     .filter(
       (item) =>
         !active.some(
           (tracker) =>
-            tracker.title.trim().toLowerCase() ===
-            item.title.trim().toLowerCase(),
+            spontaneousRepeatKey('other', tracker.title) ===
+            spontaneousRepeatKey('other', item.title),
         ),
     );
 
@@ -156,6 +165,8 @@ export function TodayTracker({ patientName, date, onDateChange, data, onChange, 
   }
 
   function openAdd(prefill?: Spontaneous) {
+    setFormError('');
+    setScheduleConfirmed(!prefill);
     setEditingId(null);
     setDraft(
       prefill
@@ -167,7 +178,7 @@ export function TodayTracker({ patientName, date, onDateChange, data, onChange, 
                   ? 'difficult'
                   : 'checkin',
             title: prefill.title,
-            description: prefill.note,
+            description: '',
             days: everyDay,
           }
         : blankDraft(),
@@ -176,6 +187,8 @@ export function TodayTracker({ patientName, date, onDateChange, data, onChange, 
   }
 
   function openEdit(item: Tracker) {
+    setFormError('');
+    setScheduleConfirmed(true);
     setEditingId(item.id);
     setDraft({
       kind: item.kind,
@@ -188,14 +201,10 @@ export function TodayTracker({ patientName, date, onDateChange, data, onChange, 
 
   function saveTracker(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!draft.title.trim() || !draft.description.trim() || !draft.days.length)
-      return;
-    const next = {
-      ...draft,
-      title: draft.title.trim(),
-      description: draft.description.trim(),
-      days: [...draft.days].sort((left, right) => left - right),
-    };
+    if (!scheduleConfirmed) { setFormError('Confirm when this event should appear.'); return; }
+    let next: TrackerDefinition;
+    try { next = trackerValues(draft); }
+    catch (error) { setFormError(error instanceof Error ? error.message : 'Check the event details.'); return; }
     if (editingId)
       setTrackers((current) =>
         current.map((item) =>
@@ -209,23 +218,38 @@ export function TodayTracker({ patientName, date, onDateChange, data, onChange, 
 
   function addUnexpected(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!unexpectedTitle.trim()) return;
-    setSpontaneous((current) => [
-      ...current,
-      {
-        id: createEventId(),
-        date,
-        kind: unexpectedKind,
-        title: unexpectedTitle.trim(),
-        note: unexpectedNote.trim(),
-        time: unexpectedTime,
-      },
-    ]);
+    const title = unexpectedTitle.trim();
+    const note = unexpectedNote.trim();
+    if (!title || title.length > 100) { setUnexpectedError('Enter a title of up to 100 characters.'); return; }
+    if (note.length > 4000) { setUnexpectedError('Shorten the note to 4,000 characters.'); return; }
+    const details = Object.fromEntries(Object.entries(unexpectedDetails)
+      .map(([key, value]) => [key, value?.trim() ?? '']).filter(([, value]) => value)) as MeltdownDetails;
+    const next: Spontaneous = { id: editingUnexpectedId ?? createEventId(), date,
+      kind: unexpectedKind, title, note, time: unexpectedTime, details: unexpectedKind === 'meltdown' ? details : {} };
+    setSpontaneous(current => editingUnexpectedId
+      ? current.map(item => item.id === editingUnexpectedId ? next : item) : [...current, next]);
     setUnexpectedTitle('');
     setUnexpectedNote('');
     setUnexpectedTime('');
+    setUnexpectedDetails({});
+    setEditingUnexpectedId(null);
+    setUnexpectedError('');
     setShowUnexpectedForm(false);
     setLastRemoved(null);
+  }
+
+  function openUnexpected(item?: Spontaneous, edit = false) {
+    setEditingUnexpectedId(edit ? item?.id ?? null : null);
+    setUnexpectedKind(item?.kind ?? 'good');
+    setUnexpectedTitle(item?.title ?? '');
+    setUnexpectedNote(edit ? item?.note ?? '' : '');
+    setUnexpectedDetails(edit ? item?.details ?? {} : {});
+    const now = new Date();
+    const defaultTime = date === localDateValue(now)
+      ? `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}` : '12:00';
+    setUnexpectedTime(edit ? item?.time || defaultTime : defaultTime);
+    setUnexpectedError('');
+    setShowUnexpectedForm(true);
   }
 
   return (
@@ -265,7 +289,7 @@ export function TodayTracker({ patientName, date, onDateChange, data, onChange, 
                     className="flex h-11 items-center gap-2 rounded-xl border bg-card px-3 text-sm font-semibold hover:bg-muted"
                     onClick={() => setMenuOpen((value) => !value)}
                   >
-                    Trackers <MoreHorizontal className="size-5" />
+                    Events <MoreHorizontal className="size-5" />
                   </button>
                   {menuOpen && (
                     <div className="absolute right-0 z-10 mt-2 w-48 rounded-xl border bg-card p-1 shadow-lg">
@@ -276,7 +300,7 @@ export function TodayTracker({ patientName, date, onDateChange, data, onChange, 
                           setScreen('manage');
                         }}
                       >
-                        Manage trackers
+                        Manage events
                       </button>
                     </div>
                   )}
@@ -416,8 +440,8 @@ export function TodayTracker({ patientName, date, onDateChange, data, onChange, 
               })}
               {!scheduled.length && (
                 <p className="rounded-2xl border border-dashed bg-card p-6 text-sm text-muted-foreground">
-                  No trackers are scheduled for this day. Use the tracker menu
-                  to add one.
+                  No regular events are scheduled for this day.{' '}
+                  {!readOnly && <button className="font-semibold text-primary underline" onClick={() => setScreen('manage')}>Manage events</button>}
                 </p>
               )}
             </section>
@@ -435,7 +459,7 @@ export function TodayTracker({ patientName, date, onDateChange, data, onChange, 
                 </div>
                 {!readOnly && <button
                   className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-primary px-4 font-semibold text-primary-foreground"
-                  onClick={() => setShowUnexpectedForm((value) => !value)}
+                  onClick={() => showUnexpectedForm ? setShowUnexpectedForm(false) : openUnexpected()}
                 >
                   <Plus className="size-4" /> Add spontaneous event
                 </button>}
@@ -446,7 +470,7 @@ export function TodayTracker({ patientName, date, onDateChange, data, onChange, 
                   className="grid gap-3 rounded-xl bg-muted/50 p-4"
                 >
                   <label className="grid gap-1 text-sm font-medium">
-                    Kind
+                    Category
                     <select
                       className="h-11 rounded-lg border bg-background px-3"
                       value={unexpectedKind}
@@ -477,7 +501,7 @@ export function TodayTracker({ patientName, date, onDateChange, data, onChange, 
                   </label>
                   <div className="grid gap-3 sm:grid-cols-[10rem_1fr]">
                     <label className="grid gap-1 text-sm font-medium">
-                      Time (optional)
+                      Occurrence time
                       <input
                         type="time"
                         className="h-11 rounded-lg border bg-background px-3"
@@ -489,19 +513,33 @@ export function TodayTracker({ patientName, date, onDateChange, data, onChange, 
                     </label>
                     <label className="grid gap-1 text-sm font-medium">
                       Note (optional)
-                      <input
-                        className="h-11 rounded-lg border bg-background px-3"
+                      <textarea
+                        className="min-h-11 rounded-lg border bg-background px-3 py-2"
                         value={unexpectedNote}
                         onChange={(event) =>
                           setUnexpectedNote(event.target.value)
                         }
                         placeholder="A little context"
+                        maxLength={4000}
                       />
                     </label>
                   </div>
+                  {unexpectedKind === 'meltdown' && <details className="rounded-lg border bg-background p-3">
+                    <summary className="cursor-pointer text-sm font-medium">Meltdown details (optional)</summary>
+                    <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                      {(['duration', 'intensity', 'trigger', 'earlySigns', 'aggression', 'whatHelped'] as const).map(field =>
+                        <label key={field} className="grid gap-1 text-sm font-medium">
+                          {({ duration: 'Duration', intensity: 'Intensity', trigger: 'Trigger', earlySigns: 'Early signs', aggression: 'Aggression', whatHelped: 'What helped' } as const)[field]}
+                          <input className="h-11 rounded-lg border bg-background px-3" maxLength={1000}
+                            value={unexpectedDetails[field] ?? ''}
+                            onChange={event => setUnexpectedDetails(current => ({ ...current, [field]: event.target.value }))} />
+                        </label>)}
+                    </div>
+                  </details>}
+                  {unexpectedError && <p role="alert" className="text-sm text-destructive">{unexpectedError}</p>}
                   <div className="flex flex-wrap gap-2">
                     <button className="min-h-11 rounded-xl bg-primary px-5 font-semibold text-primary-foreground">
-                      Save event
+                      {editingUnexpectedId ? 'Save changes' : 'Save event'}
                     </button>
                     <button
                       type="button"
@@ -530,20 +568,25 @@ export function TodayTracker({ patientName, date, onDateChange, data, onChange, 
                       </p>
                     )}
                   </div>
-                  {!readOnly && <button
-                    aria-label={`Remove ${item.title}`}
-                    className="min-h-11 shrink-0 rounded-lg px-3 text-sm text-muted-foreground underline hover:text-destructive"
-                    onClick={() => {
-                      setSpontaneous((current) =>
-                        current.filter((event) => event.id !== item.id),
-                      );
-                      setLastRemoved(item);
-                    }}
-                  >
-                    Remove
-                  </button>}
+                  {!readOnly && <div className="flex shrink-0 gap-2">
+                    <button className="min-h-11 rounded-lg px-3 text-sm text-primary underline" onClick={() => openUnexpected(item)}>Log another</button>
+                    <button className="min-h-11 rounded-lg px-3 text-sm text-primary underline" onClick={() => openUnexpected(item, true)}>Edit</button>
+                    <button aria-label={`Remove ${item.title}`}
+                      className="min-h-11 rounded-lg px-3 text-sm text-muted-foreground underline hover:text-destructive"
+                      onClick={() => { setSpontaneous(current => current.filter(event => event.id !== item.id)); setLastRemoved(item); }}>
+                      Remove
+                    </button>
+                  </div>}
                 </div>
               ))}
+              {!readOnly && (previousEvents.length > 0 || hasMorePreviousEvents) && <details className="border-t pt-3 text-sm">
+                <summary className="cursor-pointer font-medium">Log another occurrence</summary>
+                <p className="mt-1 text-muted-foreground">Choose a previous event. Notes and meltdown details start empty.</p>
+                <div className="mt-3 flex flex-wrap gap-2">{previousEvents.map(item =>
+                  <button key={spontaneousRepeatKey(item.kind, item.title)} className="min-h-11 rounded-xl border px-3 text-left hover:bg-muted"
+                    onClick={() => openUnexpected(item)}>{item.title} <span className="text-muted-foreground">· {item.kind}</span></button>)}</div>
+                {hasMorePreviousEvents && <button className="mt-3 min-h-11 font-semibold text-primary underline" onClick={onLoadMoreEvents}>Load more previous events</button>}
+              </details>}
               {lastRemoved && !readOnly && (
                 <output className="flex flex-wrap items-center gap-3 rounded-lg bg-muted p-3 text-sm">
                   Event removed.
@@ -564,14 +607,14 @@ export function TodayTracker({ patientName, date, onDateChange, data, onChange, 
                   className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-sky-50 p-4 text-sm text-sky-950 dark:bg-sky-950 dark:text-sky-100"
                 >
                       <span>
-                    <b>{item.title}</b> has been logged four times. Add it to
+                    <b>{item.title}</b> has been logged more than three times. Add it to
                     the daily check-in?
                   </span>
                   <button
                     className="font-semibold underline"
                     onClick={() => openAdd(item)}
                   >
-                    Make a tracker
+                    Make this a regular event
                   </button>
                 </div>
               ))}
@@ -593,7 +636,7 @@ export function TodayTracker({ patientName, date, onDateChange, data, onChange, 
                   {patientName}
                 </p>
                 <h1 className="mt-1 text-3xl font-bold tracking-tight">
-                  Manage trackers
+                  Manage events
                 </h1>
                 <p className="mt-2 text-sm text-muted-foreground">
                   Choose what appears on each day.
@@ -603,7 +646,7 @@ export function TodayTracker({ patientName, date, onDateChange, data, onChange, 
                 className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-primary px-4 font-semibold text-primary-foreground"
                 onClick={() => openAdd()}
               >
-                <Plus className="size-4" /> Add tracker
+                <Plus className="size-4" /> Add event
               </button>
             </div>
             <div className="space-y-3">
@@ -663,7 +706,7 @@ export function TodayTracker({ patientName, date, onDateChange, data, onChange, 
                             setDeleteId(null);
                           }}
                         >
-                          Delete tracker
+                          Delete event
                         </button>
                         <button
                           className="min-h-11 rounded-lg border px-4"
@@ -678,7 +721,7 @@ export function TodayTracker({ patientName, date, onDateChange, data, onChange, 
               ))}
               {!active.length && (
                 <p className="rounded-2xl border border-dashed bg-card p-6 text-sm text-muted-foreground">
-                  No trackers yet. Add one when you are ready.
+                  No regular events yet. Add one when you are ready.
                 </p>
               )}
             </div>
@@ -691,14 +734,14 @@ export function TodayTracker({ patientName, date, onDateChange, data, onChange, 
               className="inline-flex min-h-11 items-center gap-2 text-sm font-semibold text-primary hover:underline"
               onClick={() => setScreen('manage')}
             >
-              <ArrowLeft className="size-4" /> Back to trackers
+              <ArrowLeft className="size-4" /> Back to events
             </button>
             <div>
               <p className="text-xs font-bold uppercase tracking-widest text-primary">
                 {patientName}
               </p>
               <h1 className="mt-1 text-3xl font-bold tracking-tight">
-                {editingId ? 'Edit tracker' : 'Add a tracker'}
+                {editingId ? 'Edit event' : 'Add an event'}
               </h1>
               <p className="mt-2 text-sm text-muted-foreground">
                 Keep it short. You can change it later.
@@ -791,21 +834,14 @@ export function TodayTracker({ patientName, date, onDateChange, data, onChange, 
                   <button
                     type="button"
                     className={`min-h-11 rounded-xl border px-4 text-sm ${draft.days.length === 7 ? 'border-primary bg-secondary font-semibold' : ''}`}
-                    onClick={() =>
-                      setDraft((current) => ({ ...current, days: everyDay }))
-                    }
+                    onClick={() => { setScheduleConfirmed(true); setDraft((current) => ({ ...current, days: everyDay })); }}
                   >
                     Every day
                   </button>
                   <button
                     type="button"
                     className={`min-h-11 rounded-xl border px-4 text-sm ${draft.days.length !== 7 ? 'border-primary bg-secondary font-semibold' : ''}`}
-                    onClick={() =>
-                      setDraft((current) => ({
-                        ...current,
-                        days: [1, 2, 3, 4, 5],
-                      }))
-                    }
+                    onClick={() => { setScheduleConfirmed(true); setDraft((current) => ({ ...current, days: [1, 2, 3, 4, 5] })); }}
                   >
                     Choose days
                   </button>
@@ -820,14 +856,15 @@ export function TodayTracker({ patientName, date, onDateChange, data, onChange, 
                         className="sr-only"
                         type="checkbox"
                         checked={draft.days.includes(index)}
-                        onChange={(event) =>
+                        onChange={(event) => {
+                          setScheduleConfirmed(true);
                           setDraft((current) => ({
                             ...current,
                             days: event.target.checked
                               ? [...current.days, index]
                               : current.days.filter((value) => value !== index),
-                          }))
-                        }
+                          }));
+                        }}
                       />
                       {day}
                     </label>
@@ -839,12 +876,14 @@ export function TodayTracker({ patientName, date, onDateChange, data, onChange, 
                   </p>
                 )}
               </fieldset>
+              {!scheduleConfirmed && <p className="text-sm text-muted-foreground">Confirm the schedule for this regular event.</p>}
+              {formError && <p role="alert" className="text-sm text-destructive">{formError}</p>}
               <div className="flex flex-wrap gap-2">
                 <button
-                  disabled={!draft.days.length}
+                  disabled={!draft.days.length || !scheduleConfirmed}
                   className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-primary px-5 font-semibold text-primary-foreground disabled:opacity-50"
                 >
-                  <Check className="size-4" /> Save tracker
+                  <Check className="size-4" /> Save event
                 </button>
                 <button
                   type="button"

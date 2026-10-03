@@ -62,6 +62,9 @@ vi.mock('@/hooks/use-care-records', () => ({
   useCareRecords: () => ({ data: { trackers: [], answers: {}, spontaneous: [] },
     status: 'saved', message: 'Saved', conflicts: [], change: vi.fn(), retry: vi.fn(), choose: vi.fn() }),
 }));
+vi.mock('@/hooks/use-spontaneous-catalog', () => ({
+  useSpontaneousCatalog: () => ({ previous: [], counts: {}, hasMore: false, loadMore: vi.fn() }),
+}));
 
 vi.mock('@/lib/maymay-invitations', () => ({
   getFamilyInvitation: vi.fn(async () => null),

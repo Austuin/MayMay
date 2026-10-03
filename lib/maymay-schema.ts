@@ -62,6 +62,16 @@ export type RecordAudit = {
 export type TrackerDefinition = {
   title: string; description: string; kind: TrackerKind; days: number[];
 };
+export function trackerValues(input: TrackerDefinition): TrackerDefinition {
+  const title = input.title.trim();
+  const description = input.description.trim();
+  if (!title || title.length > 100) throw new Error('Enter a title of up to 100 characters.');
+  if (!description || description.length > 240) throw new Error('Enter a description of up to 240 characters.');
+  if (!['mood', 'good', 'difficult', 'checkin', 'count'].includes(input.kind)) throw new Error('Choose a listed event type.');
+  const days = [...new Set(input.days)].sort((a, b) => a - b);
+  if (!days.length || days.some(day => !Number.isInteger(day) || day < 0 || day > 6)) throw new Error('Choose at least one weekday.');
+  return { title, description, kind: input.kind, days };
+}
 export type TrackerRecord = TrackerDefinition & RecordAudit & { trackerId: string };
 export type MeltdownDetails = {
   duration?: string; intensity?: string; trigger?: string; earlySigns?: string;
@@ -73,7 +83,13 @@ export type ObservationRecord = RecordAudit & {
   trackerId: string | null;
   trackerSnapshot: Pick<TrackerDefinition, 'title' | 'description' | 'kind'> | null;
   value: TrackerAnswer | null; title: string; note: string; details: MeltdownDetails;
+  /** Category plus normalized title for per-patient recurrence suggestions. */
+  repeatKey?: string;
 };
+
+export function spontaneousRepeatKey(kind: 'good' | 'difficult' | 'meltdown' | 'other', title: string) {
+  return `${kind}:${title.trim().toLowerCase().replace(/\s+/g, ' ')}`;
+}
 
 /** One answer document per recurring tracker/day prevents duplicate daily answers. */
 export function dailyObservationId(trackerId: string, localDate: string) {

@@ -58,6 +58,7 @@ import { meltdownEstimate, summarizeEntries } from '@/lib/maymay-insights';
 import { watchPendingRequests, type PendingRequest } from '@/lib/maymay-invitations';
 import { useCareSync } from '@/hooks/use-care-sync';
 import { useCareRecords } from '@/hooks/use-care-records';
+import { useSpontaneousCatalog } from '@/hooks/use-spontaneous-catalog';
 import { hasLegacyCareCache } from '@/lib/maymay-sync-storage';
 import {
   emptyEntry,
@@ -220,6 +221,8 @@ export default function HomePage() {
   const connectionRef = useRef<FirebaseConnection | null>(null);
   const careSync = useCareSync(firebaseConnection);
   const careRecords = useCareRecords(firebaseConnection, selectedDate);
+  const spontaneousCatalog = useSpontaneousCatalog(firebaseConnection,
+    careRecords.data.spontaneous.filter(item => item.date === selectedDate), careRecords.status);
   const { entries, message: saveMessage } = careSync;
   const [legacyCache, setLegacyCache] = useState(false);
 
@@ -618,6 +621,10 @@ export default function HomePage() {
             data={careRecords.data} onChange={careRecords.change}
             readOnly={currentRole === 'viewer'}
             saveStatus={careRecords.status} saveMessage={careRecords.message}
+            previousEvents={spontaneousCatalog.previous}
+            repeatCounts={spontaneousCatalog.counts}
+            hasMorePreviousEvents={spontaneousCatalog.hasMore}
+            onLoadMoreEvents={spontaneousCatalog.loadMore}
           />
           {careRecords.status === 'error' && <div role="alert" className="mx-auto mt-4 max-w-3xl rounded-xl border border-amber-300 bg-card p-4">
             <p>{careRecords.message}</p>
