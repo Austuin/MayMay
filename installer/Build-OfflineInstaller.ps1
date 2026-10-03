@@ -82,6 +82,7 @@ try {
   New-Item -ItemType Directory -Path (Join-Path $payloadApp 'public') -Force | Out-Null
   New-Item -ItemType Directory -Path (Join-Path $payloadApp 'scripts') -Force | Out-Null
   Copy-Item -LiteralPath (Join-Path $projectRoot 'scripts\host-terminal.mjs') -Destination (Join-Path $payloadApp 'scripts\host-terminal.mjs')
+  Copy-Item -LiteralPath (Join-Path $projectRoot 'scripts\family-invitations.mjs') -Destination (Join-Path $payloadApp 'scripts\family-invitations.mjs')
   Copy-Item -LiteralPath (Join-Path $projectRoot 'scripts\install-update.ps1') -Destination (Join-Path $payloadApp 'scripts\install-update.ps1')
   Copy-Item -LiteralPath (Join-Path $projectRoot 'scripts\provision-firestore.mjs') -Destination (Join-Path $payloadApp 'scripts\provision-firestore.mjs')
   Copy-Item -LiteralPath (Join-Path $projectRoot 'firebase.rules') -Destination (Join-Path $payloadApp 'firebase.rules')

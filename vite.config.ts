@@ -48,6 +48,9 @@ export default defineConfig(async () => {
     css: { postcss: { plugins: [tailwindcss()] } },
     server: {
       allowedHosts: ['maymay.local'],
+      ...(process.env.MAYMAY_INVITATION_API_URL ? {
+        proxy: { '/api/family-invitations/': { target: process.env.MAYMAY_INVITATION_API_URL } },
+      } : {}),
       ...(isCodexSeatbeltSandbox
         ? { watch: { useFsEvents: false, usePolling: true } }
         : {}),

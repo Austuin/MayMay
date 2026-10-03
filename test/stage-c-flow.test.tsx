@@ -7,11 +7,11 @@ import { FamilySetup } from '@/app/family-setup';
 import type { FirebaseConnection } from '@/lib/maymay-firebase';
 
 const mocks = vi.hoisted(() => {
-  let code: string | null = null;
+  let code: { code: string; inviteId: string; expiresAt: string; revoked: boolean; patientIds: string[] } | null = null;
   let members: Record<string, unknown>[] = [];
   return {
-    getCode: vi.fn(async () => code),
-    rotateCode: vi.fn(async () => { code = 'MM1.family-a.0123456789abcdef0123456789abcdef'; return code; }),
+    getCode: vi.fn(async () => code ? { inviteId: code.inviteId, expiresAt: code.expiresAt, revoked: false, patientIds: code.patientIds } : null),
+    rotateCode: vi.fn(async () => { code = { code: 'MM1.family-a.invite.0123456789abcdef0123456789abcdef', inviteId: 'invite', expiresAt: '2099-01-01T00:00:00Z', revoked: false, patientIds: ['patient-a'] }; return code; }),
     listMembers: vi.fn(async () => members),
     approve: vi.fn(async (_connection, _familyId, userId, role, patientIds) => {
       members = members.map(member => member.userId === userId ? { ...member, status: 'Active', role, patientIds } : member);
@@ -28,7 +28,9 @@ const mocks = vi.hoisted(() => {
 });
 
 vi.mock('@/lib/maymay-invitations', () => ({
-  getFamilyCode: mocks.getCode,
+  getFamilyInvitation: mocks.getCode,
+  sendVerificationEmail: vi.fn(),
+  checkEmailVerification: vi.fn(async () => true),
   rotateFamilyCode: mocks.rotateCode,
   listFamilyMembers: mocks.listMembers,
   approveFamilyRequest: mocks.approve,
@@ -50,7 +52,7 @@ const patient = { familyId: 'family-a', patientId: 'patient-a', name: 'Sam' };
 function connection(role: 'Primary' | 'Caregiver' = 'Primary', requests: unknown[] = []) {
   return {
     app: { options: { projectId: 'demo-test' } }, db: {},
-    user: { uid: role === 'Primary' ? 'owner' : 'joining', email: 'joining@example.test', displayName: 'Joining' },
+    user: { uid: role === 'Primary' ? 'owner' : 'joining', email: 'joining@example.test', displayName: 'Joining', emailVerified: true },
     profile: { familyId: role === 'Primary' ? 'family-a' : '', role: role === 'Primary' ? 'master' : 'pending', active: role === 'Primary' },
     childId: role === 'Primary' ? 'patient-a' : '',
     families: role === 'Primary' ? [{ familyId: 'family-a', name: 'Smith', role: 'Primary', primaryId: 'owner', patients: [patient] }] : [],
@@ -66,6 +68,27 @@ beforeEach(() => {
 afterEach(() => { cleanup(); localStorage.clear(); });
 
 describe('Stage C invitation controls', () => {
+  it('requires email verification before submitting a join request', async () => {
+    const unverified = connection('Caregiver');
+    Object.assign(unverified.user, { emailVerified: false });
+    render(<JoinFamilyForm connection={unverified} onChanged={vi.fn()} />);
+    expect((screen.getByRole('button', { name: 'Request access' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'I have verified my email' }));
+    await screen.findByText('Email verified. You can request access now.');
+    expect((screen.getByRole('button', { name: 'Request access' }) as HTMLButtonElement).disabled).toBe(false);
+    expect(mocks.request).not.toHaveBeenCalled();
+  });
+
+  it('shows invitation metadata after reopening without recovering its secret', async () => {
+    await mocks.rotateCode();
+    mocks.setMembers([{ familyId: 'family-a', userId: 'joining', role: 'Caregiver', status: 'Pending', patientIds: [], proposedPatientIds: ['patient-a'], invitationId: 'previous', requesterName: 'Joining', requesterEmail: 'joining@example.test', requesterEmailVerified: true }]);
+    render(<FamilyAccess connection={connection()} onChanged={vi.fn()} />);
+    await screen.findByText(/This request used a code/);
+    expect(screen.queryByLabelText('Current Family Code')).toBeNull();
+    expect(screen.getByText('Email verified')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Replace code' })).toBeTruthy();
+  });
+
   it('submits a pasted code, shows the pending request, and cancels it', async () => {
     const initial = connection('Caregiver');
     const pending = connection('Caregiver', [{ familyId: 'family-a', status: 'Pending' }]);
@@ -91,13 +114,14 @@ describe('Stage C invitation controls', () => {
     const owner = connection();
     mocks.setMembers([
       { familyId: 'family-a', userId: 'owner', role: 'Primary', status: 'Active', patientIds: ['patient-a'], requesterName: 'Owner', requesterEmail: '' },
-      { familyId: 'family-a', userId: 'joining', role: 'Caregiver', status: 'Pending', patientIds: [], requesterName: 'Joining', requesterEmail: 'joining@example.test' },
+      { familyId: 'family-a', userId: 'joining', role: 'Caregiver', status: 'Pending', patientIds: [], proposedPatientIds: ['patient-a'], requesterEmailVerified: true, invitationId: 'invite', requesterName: 'Joining', requesterEmail: 'joining@example.test' },
     ]);
     const onChanged = vi.fn();
     render(<FamilyAccess connection={owner} onChanged={onChanged} />);
     await screen.findByText('Joining');
     fireEvent.click(screen.getByRole('button', { name: 'Generate code' }));
-    await waitFor(() => expect(mocks.rotateCode).toHaveBeenCalledWith(owner, 'family-a'));
+    await waitFor(() => expect(mocks.rotateCode).toHaveBeenCalledWith(owner, 'family-a', ['patient-a']));
+    await screen.findByText('Family Code generated.');
     expect((screen.getByLabelText('Current Family Code') as HTMLInputElement).value).toContain('MM1.family-a.');
     fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
     await waitFor(() => expect(mocks.approve).toHaveBeenCalledWith(owner, 'family-a', 'joining', 'Caregiver', ['patient-a']));

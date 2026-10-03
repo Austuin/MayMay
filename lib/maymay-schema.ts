@@ -25,14 +25,14 @@ export type AdminRecord = {
 export type FamilyRecord = {
   familyId: string; name: string; creatorId: string; primaryId: string;
   dataGeneration: string; dateCreated: unknown;
+  activeInviteId?: string;
 };
 export type FamilyMembership = {
   familyId: string; userId: string; role: FamilyRole; status: MembershipStatus;
   patientIds?: string[]; requestedAt?: unknown; dateJoined?: unknown;
   approvedAt?: unknown; approvedBy?: string; reviewedAt?: unknown; reviewedBy?: string;
   requesterName?: string; requesterEmail?: string; relationship?: string;
-  /** Transitional invitation implementation; replaced by Stage 3. */
-  joinSecret?: string;
+  invitationId?: string; proposedPatientIds?: string[]; requesterEmailVerified?: boolean;
 };
 export type PatientFields = {
   name: string; birthdate?: string; sex?: Sex; ethnicity?: string;

@@ -12,6 +12,7 @@ import { cert, getApps, initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { FieldValue, getFirestore } from 'firebase-admin/firestore';
 import multicastDns from 'multicast-dns';
+import { createInvitationHandler } from './family-invitations.mjs';
 
 const PROJECT_ID = 'maymaydata-a6fda';
 const FAMILY_ID = 'maymay';
@@ -424,6 +425,7 @@ async function staticFileFor(requestUrl) {
 function startStaticServer() {
   const server = createServer(async (request, response) => {
     try {
+      if (await handleInvitations(request, response)) return;
       const file = await staticFileFor(request.url);
       if (!file) {
         response.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
@@ -452,7 +454,16 @@ function startStaticServer() {
   return server;
 }
 
-function startDevelopmentServer() {
+async function startDevelopmentServer() {
+  // The development browser uses Vite's same-origin proxy. Admin credentials
+  // stay in this host process; the internal API port only listens on loopback.
+  const api = createServer(async (request, response) => {
+    if (!await handleInvitations(request, response)) { response.writeHead(404); response.end(); }
+  });
+  await new Promise((resolve, reject) => {
+    api.once('error', reject);
+    api.listen(0, '127.0.0.1', resolve);
+  });
   const child = spawn(
     process.execPath,
     [VINEXT_CLI, 'dev', '--hostname', '0.0.0.0'],
@@ -460,14 +471,16 @@ function startDevelopmentServer() {
       cwd: ROOT,
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
-      env: { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1' },
+      env: { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1', MAYMAY_INVITATION_API_URL: `http://127.0.0.1:${api.address().port}` },
     },
   );
   child.stdout.on('data', writeServerIssues);
   child.stderr.on('data', writeServerIssues);
   child.once('exit', (code) => {
+    api.close();
     if (code && code !== 0) console.error(`\nWeb server stopped with code ${code}.`);
   });
+  child.once('error', () => api.close());
   return child;
 }
 
@@ -534,6 +547,7 @@ const adminApp =
   initializeApp({ credential, projectId: PROJECT_ID }, 'maymay-host');
 const auth = getAuth(adminApp);
 const db = getFirestore(adminApp);
+const handleInvitations = createInvitationHandler({ db, auth });
 
 process.title = 'MayMay Host';
 if (process.stdout.isTTY) writeTerminal('\u001B[2J\u001B[H');
