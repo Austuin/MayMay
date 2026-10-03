@@ -612,7 +612,7 @@ export function TodayTracker({ patientName, date, onDateChange, data, onChange, 
               {!readOnly && repeated.map((item) => (
                 <div
                   key={item.kind + item.title}
-                  className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-sky-50 p-4 text-sm text-sky-950 dark:bg-sky-950 dark:text-sky-100"
+                  className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-sky-50 p-4 text-sm text-sky-950 dark:bg-secondary dark:text-secondary-foreground"
                 >
                       <span>
                     <b>{item.title}</b> has been logged more than three times. Add it to
@@ -702,7 +702,7 @@ export function TodayTracker({ patientName, date, onDateChange, data, onChange, 
                       </p>
                       <div className="mt-3 flex gap-2">
                         <button
-                          className="min-h-11 rounded-lg bg-destructive px-4 font-semibold text-white"
+                          className="min-h-11 rounded-lg bg-destructive px-4 font-semibold text-white dark:text-background"
                           onClick={() => {
                             setTrackers((current) =>
                               current.map((tracker) =>
