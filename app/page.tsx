@@ -1,9 +1,8 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState, type SyntheticEvent } from 'react';
+import { useEffect, useRef, useState, type SyntheticEvent } from 'react';
 import {
   AlertCircle,
-  ArrowRight,
   BarChart3,
   Bell,
   Cloud,
@@ -11,24 +10,14 @@ import {
   HeartHandshake,
   History,
   Home,
-  Info,
   LoaderCircle,
   LogOut,
-  Plus,
   Settings2,
   ShieldCheck,
-  TrendingUp,
 } from 'lucide-react';
-import { CartesianGrid, Line, LineChart, XAxis, YAxis } from 'recharts';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import {
-  ChartContainer,
-  ChartTooltip,
-  ChartTooltipContent,
-  type ChartConfig,
-} from '@/components/ui/chart';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { FamilySetup } from './family-setup';
@@ -38,6 +27,7 @@ import { PatientForm } from './patient-form';
 import { PasswordResetForm } from './password-reset-form';
 import { AccountProfile, FamilyProfile, PatientProfileReadOnly } from './profile-settings';
 import { TodayTracker } from './today-tracker';
+import { ObservationHistory, ObservationInsights } from './observation-history';
 import {
   connectFirebase,
   connectFirebaseWithGoogle,
@@ -57,53 +47,13 @@ import {
   type MayMayRuntimeConfig,
   type PatientFields,
 } from '@/lib/maymay-firebase';
-import { meltdownEstimate, summarizeEntries } from '@/lib/maymay-insights';
 import { watchPendingRequests, type PendingRequest } from '@/lib/maymay-invitations';
-import { useCareSync } from '@/hooks/use-care-sync';
 import { useCareRecords } from '@/hooks/use-care-records';
+import { useObservationHistory } from '@/hooks/use-observation-history';
 import { useSpontaneousCatalog } from '@/hooks/use-spontaneous-catalog';
-import { hasLegacyCareCache } from '@/lib/maymay-sync-storage';
-import {
-  emptyEntry,
-  historyCutoffDate,
-  localDateValue,
-  type DailyEntry,
-} from '@/lib/maymay-types';
-
-function ConflictValues({ value }: { value: Record<string, unknown> | null }) {
-  if (!value) return <p className="text-sm">Removed / not recorded</p>;
-  const fields = Object.entries(value).filter(([key, item]) => !['id', 'eventId'].includes(key) && item !== '' && item != null);
-  return <dl className="mt-1 space-y-1 text-sm">{fields.map(([key, item]) => <div key={key}>
-    <dt className="inline font-medium capitalize">{key.replace(/([A-Z])/g, ' $1')}: </dt>
-    <dd className="inline break-words">{Array.isArray(item) ? item.join(', ') : String(item)}</dd>
-  </div>)}</dl>;
-}
-
-const chartConfig = {
-  mood: { label: 'Mood', color: 'var(--chart-1)' },
-  meltdowns: { label: 'Meltdowns', color: 'var(--chart-4)' },
-} satisfies ChartConfig;
+import { historyCutoffDate, localDateValue } from '@/lib/maymay-types';
 
 type SyncState = 'starting' | 'signed-out' | 'connecting' | 'connected' | 'error' | 'host-error';
-
-function displayDate(date: string, includeWeekday = true) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return 'Choose a date';
-  return new Intl.DateTimeFormat('en-US', {
-    ...(includeWeekday ? { weekday: 'long' as const } : {}),
-    month: 'long',
-    day: 'numeric',
-    year: new Date().getFullYear() !== Number(date.slice(0, 4)) ? 'numeric' : undefined,
-  }).format(new Date(`${date}T12:00:00`));
-}
-
-function entryMoodAverage(entry: DailyEntry) {
-  const scores = Object.values(entry.moods).map((period) => period.score).filter((score): score is number => Boolean(score));
-  return scores.length ? scores.reduce((sum, score) => sum + score, 0) / scores.length : 0;
-}
-
-function entryMoodTags(entry: DailyEntry) {
-  return [...new Set(Object.values(entry.moods).flatMap((period) => period.tags))];
-}
 
 function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
@@ -222,19 +172,10 @@ export default function HomePage() {
   const [familyMessage, setFamilyMessage] = useState('');
   const [pendingRequests, setPendingRequests] = useState<PendingRequest[]>([]);
   const connectionRef = useRef<FirebaseConnection | null>(null);
-  const careSync = useCareSync(firebaseConnection);
   const careRecords = useCareRecords(firebaseConnection, selectedDate);
+  const observationHistory = useObservationHistory(firebaseConnection, activeTab);
   const spontaneousCatalog = useSpontaneousCatalog(firebaseConnection,
     careRecords.data.spontaneous.filter(item => item.date === selectedDate), careRecords.status);
-  const { entries, message: saveMessage } = careSync;
-  const [legacyCache, setLegacyCache] = useState(false);
-
-  const entry = useMemo(
-    () => entries.find((item) => item.date === selectedDate) ?? emptyEntry(selectedDate),
-    [entries, selectedDate],
-  );
-  const summary = useMemo(() => summarizeEntries(entries), [entries]);
-  const risk = useMemo(() => meltdownEstimate(entries, entry), [entries, entry]);
   const currentRole = firebaseConnection?.profile.role;
   const isMaster = currentRole === 'master';
   const selectedFamily = firebaseConnection?.families.find(item => item.familyId === firebaseConnection.profile.familyId);
@@ -254,7 +195,6 @@ export default function HomePage() {
     let alive = true;
     queueMicrotask(() => {
       if (!alive) return;
-      setLegacyCache(hasLegacyCareCache());
       setHydrated(true);
     });
     const start = async () => {
@@ -315,7 +255,7 @@ export default function HomePage() {
     if (!connection) return;
     try {
       useConnection(await refreshFirebaseConnection(connection, {
-        familyId: connection.profile.familyId, patientId: connection.childId,
+        familyId: connection.profile.familyId, patientId: connection.patientId,
       }));
     } catch { /* The current access state will be checked again on the next refresh. */ }
   }
@@ -465,7 +405,6 @@ export default function HomePage() {
 
   async function handleSignOut() {
     const connection = connectionRef.current;
-    careSync.stop();
     connectionRef.current = null;
     setFirebaseConnection(null);
     setFamilyMessage('');
@@ -515,7 +454,7 @@ export default function HomePage() {
   }, []);
 
   if (!hydrated || syncState === 'starting' || syncState === 'connecting'
-    || (syncState === 'connected' && Boolean(firebaseConnection?.childId) && careRecords.status === 'loading')) {
+    || (syncState === 'connected' && Boolean(firebaseConnection?.patientId) && careRecords.status === 'loading')) {
     return (
       <main className="access-shell">
         <output className="access-loading"><LoaderCircle className="animate-spin" /><span>Starting MayMay…</span></output>
@@ -546,7 +485,7 @@ export default function HomePage() {
     );
   }
 
-  if (firebaseConnection && !firebaseConnection.childId) {
+  if (firebaseConnection && !firebaseConnection.patientId) {
     return <FamilySetup
       connection={firebaseConnection}
       onCreateFamily={handleCreateFamily}
@@ -588,37 +527,18 @@ export default function HomePage() {
               </select>
             </label>}
             {selectedFamily && selectedFamily.patients.length > 1 && <label className="text-xs font-medium">Patient
-              <select className="ml-2 h-9 rounded-md border bg-background px-2 text-sm" value={firebaseConnection?.childId ?? ''} onChange={event => handleSelectFamilyPatient(selectedFamily.familyId, event.target.value)}>
+              <select className="ml-2 h-9 rounded-md border bg-background px-2 text-sm" value={firebaseConnection?.patientId ?? ''} onChange={event => handleSelectFamilyPatient(selectedFamily.familyId, event.target.value)}>
                 {selectedFamily.patients.map(patient => <option key={patient.patientId} value={patient.patientId}>{patient.name}</option>)}
               </select>
             </label>}
-            {activeTab !== 'today' && <div className="sync-pill" aria-live="polite" aria-label={`Data storage status: ${careSync.status === 'saved' ? 'Firestore synced' : 'sync pending'}`}>
-              {careSync.status === 'saved' ? <Cloud /> : <CloudOff />}
-              <span>{careSync.status === 'saved' ? 'Firestore synced' : 'Sync pending'}</span>
+            {activeTab !== 'today' && <div className="sync-pill" aria-live="polite" aria-label={`Data storage status: ${careRecords.status === 'saved' ? 'Firestore synced' : 'sync pending'}`}>
+              {careRecords.status === 'saved' ? <Cloud /> : <CloudOff />}
+              <span>{careRecords.status === 'saved' ? 'Firestore synced' : 'Sync pending'}</span>
             </div>}
             <Button variant="outline" size="icon-lg" aria-label="Sign out" onClick={handleSignOut}><LogOut /></Button>
           </div>
         </div>
       </header>
-
-      <div className="mx-auto max-w-[1160px] space-y-3 px-4 pt-4 sm:px-6 lg:px-8">
-        {activeTab !== 'today' && careSync.status === 'error' && <div role="alert" className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-amber-950">
-          <p>{saveMessage}</p>
-          <Button variant="outline" className="mt-2" onClick={careSync.retry}>Retry sync</Button>
-        </div>}
-        {activeTab !== 'today' && careSync.conflicts.map(conflict => <section key={conflict.eventId} aria-label={`Conflicting record for ${conflict.date}`} className="rounded-xl border border-amber-300 bg-card p-4">
-          <p className="font-semibold">Two edits to the same record · {conflict.date}</p>
-          <p className="text-sm text-muted-foreground">Your edit is kept on this device. The shared record has not been overwritten.</p>
-          <div className="mt-3 grid gap-3 sm:grid-cols-2">
-            <div><b>Saved version</b><ConflictValues value={conflict.remote} /></div>
-            <div><b>Your edit</b><ConflictValues value={conflict.local} /></div>
-          </div>
-          <Button variant="outline" className="mt-3" onClick={() => careSync.acceptSaved(conflict.eventId)}>Use saved version</Button>
-          <Button variant="outline" className="ml-2 mt-3" onClick={() => careSync.saveDraft(conflict.eventId)}>Save my edit instead</Button>
-          <p className="mt-2 text-sm text-muted-foreground">Choose which version to keep. If it changes again while you review, we will ask you to review it again.</p>
-        </section>)}
-        {legacyCache && <details className="text-sm text-muted-foreground"><summary>Previous device cache preserved</summary><p>Older local records have been kept on this device. They are not uploaded automatically because their account and saved versions cannot be verified. Shared records load from Firestore; any unsynced older notes need separate recovery.</p></details>}
-      </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="mx-auto w-full max-w-[1160px] px-4 pb-28 pt-5 sm:px-6 sm:pb-10 lg:px-8">
         <TabsList className="top-nav" aria-label="MayMay sections">
@@ -630,7 +550,7 @@ export default function HomePage() {
 
         <TabsContent value="today" className="mt-5">
           <TodayTracker
-            key={`${firebaseConnection?.profile.familyId}:${firebaseConnection?.childId}`}
+            key={`${firebaseConnection?.profile.familyId}:${firebaseConnection?.patientId}:${selectedDate}`}
             patientName={firebaseConnection?.patient?.name ?? 'Patient'}
             date={selectedDate} onDateChange={setSelectedDate}
             data={careRecords.data} onChange={careRecords.change}
@@ -659,51 +579,18 @@ export default function HomePage() {
         </TabsContent>
 
         <TabsContent value="insights" className="mt-5">
-          <div className="page-intro"><div><p className="eyebrow">Patterns, not labels</p><h1>Insights</h1><p>Use trends as clues to support observation—not as medical advice.</p></div></div>
-          {summary.totalDays === 0 ? <div className="empty-state mt-5"><BarChart3 /><h2>Insights begin with the first check-in</h2><p>Complete today&apos;s entry to start building a clearer picture.</p><Button onClick={() => setActiveTab('today')}>Go to today</Button></div> : <div className="mt-5 space-y-5">
-            <div className="stats-grid">
-              <Card><CardContent><small>Days recorded</small><strong>{summary.totalDays}</strong><span>in this device&apos;s history</span></CardContent></Card>
-              <Card><CardContent><small>Average mood</small><strong>{summary.averageMood ? summary.averageMood.toFixed(1) : '—'}<i>/5</i></strong><span>on days with a mood entry</span></CardContent></Card>
-              <Card><CardContent><small>Meltdown days</small><strong>{summary.meltdownDayPercent}%</strong><span>{summary.meltdownDays} of {summary.totalDays} recorded days</span></CardContent></Card>
-              <Card><CardContent><small>Total events</small><strong>{summary.totalMeltdowns}</strong><span>detailed meltdowns recorded</span></CardContent></Card>
-            </div>
-
-            <Card>
-              <CardHeader><CardTitle className="text-xl font-bold">Mood by time of day</CardTitle><p className="text-muted-foreground">Separate periods make it easier to spot when support may be most useful.</p></CardHeader>
-              <CardContent className="period-insights-grid">
-                {summary.periodAverages.map((period) => (
-                  <div key={period.period}>
-                    <span className="period-symbol" aria-hidden="true">{period.period === 'morning' ? '☀️' : period.period === 'afternoon' ? '🌤️' : '🌙'}</span>
-                    <b>{period.label}</b>
-                    <strong>{period.days ? period.average.toFixed(1) : '—'}<small>/5</small></strong>
-                    <p>{period.days ? `${period.difficultPercent}% of ${period.days} ${period.days === 1 ? 'entry' : 'entries'} felt hard or struggling` : 'No entries yet'}</p>
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
-
-            <div className="grid gap-5 lg:grid-cols-[1.25fr_.75fr]">
-              <Card><CardHeader><CardTitle className="text-xl font-bold">Mood and event trend</CardTitle><p className="text-muted-foreground">Most recent 14 recorded days</p></CardHeader><CardContent>{summary.trend.filter((item) => item.mood).length >= 2 ? <ChartContainer config={chartConfig} className="h-[260px] w-full aspect-auto"><LineChart accessibilityLayer data={summary.trend} margin={{ left: -18, right: 12 }}><CartesianGrid vertical={false} strokeDasharray="3 3" /><XAxis dataKey="date" tickLine={false} axisLine={false} tickMargin={10} /><YAxis domain={[0, 5]} ticks={[1, 2, 3, 4, 5]} tickLine={false} axisLine={false} /><ChartTooltip content={<ChartTooltipContent />} /><Line type="monotone" dataKey="mood" stroke="var(--color-mood)" strokeWidth={3} dot={{ r: 4, fill: 'var(--color-mood)' }} connectNulls /></LineChart></ChartContainer> : <div className="quiet-empty"><TrendingUp /><div><b>One more mood entry will draw the trend.</b><p>The chart needs at least two recorded moods.</p></div></div>}</CardContent></Card>
-              <Card className="risk-card"><CardHeader><p className="eyebrow text-amber-200">Today&apos;s pattern estimate</p><CardTitle className="text-white"><span className="risk-number">{risk.ready ? `${risk.percent}%` : '—'}</span><span className="block text-lg">{risk.ready ? 'estimated chance of a meltdown' : 'building a personal baseline'}</span></CardTitle></CardHeader><CardContent className="space-y-4 text-sky-50"><p className="text-sky-100">{risk.ready ? `Based on ${risk.historyDays} prior recorded days and today's information.` : `${risk.daysUntilEstimate} more prior ${risk.daysUntilEstimate === 1 ? 'day is' : 'days are'} needed before showing a percentage.`}</p>{risk.factors.length > 0 ? <div className="flex flex-wrap gap-2">{risk.factors.map((factor) => <span key={factor} className="risk-chip">{factor}</span>)}</div> : <p className="rounded-xl bg-white/10 p-3 text-sm">Add sleep, eating, school, or mood details to personalize this estimate.</p>}<div className="border-t border-white/15 pt-3 text-xs text-sky-200"><b>{risk.confidence} estimate.</b> This is a personal pattern summary, not a clinical forecast.</div></CardContent></Card>
-            </div>
-
-            <div className="grid gap-5 md:grid-cols-2">
-              <Card><CardHeader><CardTitle className="text-xl font-bold">Most common triggers</CardTitle><p className="text-muted-foreground">From detailed meltdown entries</p></CardHeader><CardContent>{summary.triggers.length ? <div className="rank-list">{summary.triggers.slice(0, 5).map((item, index) => <div key={item.label}><span>{index + 1}</span><b>{item.label}</b><strong>{item.count}</strong></div>)}</div> : <div className="quiet-empty"><Info /><div><b>No known triggers yet</b><p>Detailed events will build this list.</p></div></div>}</CardContent></Card>
-              <Card><CardHeader><CardTitle className="text-xl font-bold">What has helped</CardTitle><p className="text-muted-foreground">Supports associated with recorded events</p></CardHeader><CardContent>{summary.helpful.length ? <div className="rank-list helpful">{summary.helpful.slice(0, 5).map((item, index) => <div key={item.label}><span>{index + 1}</span><b>{item.label}</b><strong>{item.count}</strong></div>)}</div> : <div className="quiet-empty"><HeartHandshake /><div><b>No supports recorded yet</b><p>Add what helped to future event details.</p></div></div>}</CardContent></Card>
-            </div>
-          </div>}
+          <ObservationInsights observations={observationHistory.observations} loading={observationHistory.loading}
+            error={observationHistory.error} rangeStart={observationHistory.windows.at(-1)?.start ?? null}
+            rangeEnd={today} hasMore={observationHistory.hasMore} onLoadMore={() => { void observationHistory.loadMore(); }}
+            onRefresh={observationHistory.refresh} onOpenDay={openEntry} />
         </TabsContent>
 
         <TabsContent value="history" className="mt-5">
-          <div className="page-intro"><div><p className="eyebrow">Review and continue</p><h1>History</h1><p>Edit a saved day or carefully add a day you missed.</p></div><Button variant="outline" className="h-11" onClick={startBackfill}><Plus /> Add past day</Button></div>
-          <div className="backfill-note mt-5" role="note"><Info /><span><b>Backfilling is available, but today is best.</b> Past details may be less reliable. Add only what you clearly remember.</span></div>
-          {!entries.length ? <div className="empty-state mt-5"><History /><h2>Your timeline starts today</h2><p>Saved days will appear here automatically.</p><Button onClick={() => setActiveTab('today')}>Start today&apos;s entry</Button></div> : <div className="history-list mt-5">{[...entries].sort((a, b) => b.date.localeCompare(a.date)).map((item) => {
-            const moodAverage = entryMoodAverage(item);
-            const tags = entryMoodTags(item);
-            return <button key={item.date} type="button" className="history-item" onClick={() => openEntry(item.date)}><div className="history-date"><small>{new Intl.DateTimeFormat('en-US', { weekday: 'short' }).format(new Date(`${item.date}T12:00:00`))}</small><strong>{new Date(`${item.date}T12:00:00`).getDate()}</strong><span>{new Intl.DateTimeFormat('en-US', { month: 'short' }).format(new Date(`${item.date}T12:00:00`))}</span></div><div className="history-summary"><b>{item.date === today ? 'Today' : displayDate(item.date, false)}</b><div>{moodAverage ? <span>Daily mood {moodAverage.toFixed(1)}/5</span> : <span>No mood</span>}<span>{item.schoolStatus || 'No school entry'}</span><span>{item.meltdowns.length} {item.meltdowns.length === 1 ? 'meltdown' : 'meltdowns'}</span></div>{tags.length > 0 && <p>{tags.join(' · ')}</p>}</div><ArrowRight /></button>;
-          })}</div>}
+          <ObservationHistory observations={observationHistory.observations} loading={observationHistory.loading}
+            error={observationHistory.error} rangeStart={observationHistory.windows.at(-1)?.start ?? null}
+            rangeEnd={today} hasMore={observationHistory.hasMore} onLoadMore={() => { void observationHistory.loadMore(); }}
+            onRefresh={observationHistory.refresh} onOpenDay={openEntry} onAddPastDay={startBackfill} />
         </TabsContent>
-
         <TabsContent value="settings" className="mt-5">
           <div className="page-intro">
             <div><p className="eyebrow">Your care space</p><h1>Settings</h1><p>Manage your families and patient details.</p></div>

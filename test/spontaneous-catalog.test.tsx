@@ -25,7 +25,7 @@ vi.mock('firebase/firestore', () => ({
 
 function connection(patientId: string) {
   return { app: { options: { projectId: 'demo-test' } }, db: {}, dataGeneration: 'generation-1',
-    user: { uid: 'alice' }, profile: { familyId: 'family-a' }, childId: patientId } as unknown as FirebaseConnection;
+    user: { uid: 'alice' }, profile: { familyId: 'family-a' }, patientId: patientId } as unknown as FirebaseConnection;
 }
 const key = spontaneousRepeatKey('good', 'Calm bedtime');
 const occurrence = (id: string, deletedAt: string | null = null) => ({

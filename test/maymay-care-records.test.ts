@@ -24,7 +24,7 @@ vi.mock('firebase/firestore', () => {
 });
 
 function connection(uid: string) {
-  return { db: {}, user: { uid }, dataGeneration: 'generation-1', childId: 'patient-a',
+  return { db: {}, user: { uid }, dataGeneration: 'generation-1', patientId: 'patient-a',
     profile: { familyId: 'family-a', role: 'caregiver' } } as unknown as FirebaseConnection;
 }
 const date = '2026-10-03';

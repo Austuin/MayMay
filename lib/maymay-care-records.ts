@@ -42,8 +42,8 @@ export function observationFromDocument(data: Record<string, unknown>): Observat
 
 /** The expected revision is fixed when the edit is made, including across transaction retries. */
 export async function commitCareMutation(connection: FirebaseConnection, mutation: CareMutation): Promise<CareRecord> {
-  if (!['master', 'caregiver'].includes(connection.profile.role) || !connection.childId) throw new Error('This account cannot change care records.');
-  const ref = doc(careCollection(connection.db, connection.profile.familyId, connection.childId, mutation.target), mutation.recordId);
+  if (!['master', 'caregiver'].includes(connection.profile.role) || !connection.patientId) throw new Error('This account cannot change care records.');
+  const ref = doc(careCollection(connection.db, connection.profile.familyId, connection.patientId, mutation.target), mutation.recordId);
   const receiptRef = doc(ref, 'mutations', mutation.id);
   return runTransaction(connection.db, async transaction => {
     const receipt = await transaction.get(receiptRef);
@@ -65,7 +65,7 @@ export async function commitCareMutation(connection: FirebaseConnection, mutatio
     if (raw?.deletedAt && mutation.target === 'tracker') throw new CareConflict(mutation, current);
     const revision = (current?.revision ?? 0) + 1;
     const audit = {
-      familyId: connection.profile.familyId, patientId: connection.childId,
+      familyId: connection.profile.familyId, patientId: connection.patientId,
       dataGeneration: connection.dataGeneration, updatedBy: connection.user.uid,
       updatedAt: serverTimestamp(), revision, mutationId: mutation.id,
       ...(!raw ? { createdBy: connection.user.uid, createdAt: serverTimestamp() } : {}),

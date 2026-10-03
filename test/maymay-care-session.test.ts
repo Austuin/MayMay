@@ -32,7 +32,7 @@ vi.mock('../lib/maymay-care-records', () => ({
 }));
 
 const connection = { app: { options: { projectId: 'demo-test' } }, db: {},
-  dataGeneration: 'generation-1', user: { uid: 'alice' }, childId: 'patient-a',
+  dataGeneration: 'generation-1', user: { uid: 'alice' }, patientId: 'patient-a',
   profile: { familyId: 'family-a', role: 'caregiver' },
 } as unknown as FirebaseConnection;
 const date = '2026-10-03';
@@ -45,6 +45,22 @@ beforeEach(() => {
 afterEach(() => { vi.useRealTimers(); localStorage.clear(); });
 
 describe('durable patient-scoped care drafts', () => {
+  it('projects the original snapshot of an answer after its tracker is deleted', async () => {
+    fake.records.set('school', { ...fake.records.get('school'), title: 'Renamed later', deletedAt: 'deleted' });
+    fake.records.set(`school_${date}`, { observationId: `school_${date}`, localDate: date, kind: 'answer',
+      trackerId: 'school', trackerSnapshot: { title: 'School on time', description: 'Did they arrive on time?', kind: 'good' },
+      value: false, revision: 1, deletedAt: null });
+    let view: CareView | undefined;
+    const session = new CareRecordSession(connection, date, next => { view = next; });
+    session.start();
+    expect(view?.data.historicalTrackers).toMatchObject([{ id: 'school', title: 'School on time' }]);
+    expect(view?.data.answers[date].school).toBe(false);
+    session.edit(current => ({ ...current, answers: { [date]: {} } }));
+    await vi.advanceTimersByTimeAsync(400);
+    expect(fake.records.get(`school_${date}`)?.deletedAt).toBe('deleted');
+    session.dispose();
+  });
+
   it('keeps an unanswered value empty, saves No, reloads it, and soft deletes it', async () => {
     let view: CareView | undefined;
     let session = new CareRecordSession(connection, date, next => { view = next; });
@@ -78,7 +94,7 @@ describe('durable patient-scoped care drafts', () => {
     second.start();
     expect(view?.data.answers[date].school).toBe(true);
     expect(view?.status).toBe('pending');
-    const other = { ...connection, childId: 'patient-b' };
+    const other = { ...connection, patientId: 'patient-b' };
     expect(careScope(other)).not.toBe(careScope(connection));
     const third = new CareRecordSession(other, date, next => { view = next; });
     third.start();

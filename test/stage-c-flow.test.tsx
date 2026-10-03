@@ -54,7 +54,7 @@ function connection(role: 'Primary' | 'Caregiver' = 'Primary', requests: unknown
     app: { options: { projectId: 'demo-test' } }, db: {},
     user: { uid: role === 'Primary' ? 'owner' : 'joining', email: 'joining@example.test', displayName: 'Joining', emailVerified: true },
     profile: { familyId: role === 'Primary' ? 'family-a' : '', role: role === 'Primary' ? 'master' : 'pending', active: role === 'Primary' },
-    childId: role === 'Primary' ? 'patient-a' : '',
+    patientId: role === 'Primary' ? 'patient-a' : '',
     families: role === 'Primary' ? [{ familyId: 'family-a', name: 'Smith', role: 'Primary', primaryId: 'owner', patients: [patient] }] : [],
     requests,
   } as unknown as FirebaseConnection;
@@ -142,7 +142,7 @@ describe('Stage C invitation controls', () => {
 
   it('lets an approved caregiver without patients refresh their access', async () => {
     const ready = connection();
-    const waiting = { ...ready, childId: '', families: [{ ...ready.families[0], role: 'Caregiver' as const, patients: [] }] };
+    const waiting = { ...ready, patientId: '', families: [{ ...ready.families[0], role: 'Caregiver' as const, patients: [] }] };
     mocks.refresh.mockResolvedValue(ready);
     const changed = vi.fn();
     render(<FamilySetup connection={waiting} onChanged={changed} onCreateFamily={vi.fn()} onCreatePatient={vi.fn()} onSelectFamily={vi.fn()} onMembershipsChanged={vi.fn()} onSignOut={vi.fn()} />);

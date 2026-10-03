@@ -1,6 +1,6 @@
 # MayMay 1.0 data foundation
 
-Stages 1–3 define the production records and connect account/family/patient setup and trusted invitations. Stage 4 connects tracker and observation persistence to Today. None of these stages deploys rules, resets data, or activates the live database.
+Stages 1–3 define the production records and connect account/family/patient setup and trusted invitations. Stages 4–7 connect Today, event management, profiles, History, and Insights to Trackers and Observations. None of these stages deploys rules, resets data, or activates the live database.
 
 ## Firestore layout
 
@@ -33,15 +33,17 @@ Today listens to the selected patient's Trackers and selected local day's Observ
 
 Spontaneous Observations also carry `repeatKey`, made from their category and normalized title. Today queries that key within one patient to offer a regular event after the fourth nondeleted occurrence. Editing or soft deleting an occurrence updates the suggestion count without changing the IDs or snapshots of earlier records. The recent-event chooser reads Observations in pages of 100, ordered by occurrence time; selecting an event starts a new occurrence with a new ID and empty note/details.
 
+History reads the selected patient's Observations in 90-day ranges, newest first, within the last three years. It excludes soft-deleted records and opens a day in the same Today editor. Saved answer snapshots remain visible after a tracker is deleted or its schedule changes. Insights uses those same loaded records for separate mood, Yes/No, and counter summaries and spontaneous-event counts. Unanswered days are not counted as No or zero.
+
 ## Release activation
 
 The release process must explicitly create `system/data` with `{ schemaVersion: 1, generation: "<new unique release-reset identifier>" }` after the controlled reset. There is no automatic fallback or live initializer in the browser. Setup reads this metadata from the server before writing application records, and reports that activation is pending if it is missing. User/Family records carry `dataGeneration`; tracker/observation rules also enforce it. Client setup mutations recheck the generation and require sign-in again after a reset. Stored context selection and care cache scopes include generation.
 
-Ordinary clients cannot write system metadata or invitation records. The legacy `joinSettings` flow is denied. The host API owns invitation hashes, expiry, rotation, join attempts, pending requests, approval, rejection, and cancellation. Legacy `events` readers remain temporarily under the canonical patient path for later history replacement; they are not the new Observation model. `FirebaseConnection.childId` remains a compatibility alias for the selected patient ID until those readers are retired.
+Ordinary clients cannot write system metadata or invitation records. The legacy `joinSettings` flow is denied. The host API owns invitation hashes, expiry, rotation, join attempts, pending requests, approval, rejection, and cancellation. Legacy patient `events`, `medications`, and `daySummaries` are readable only within an authorized patient scope for recovery; writes are denied. The application uses `FirebaseConnection.patientId` for the selected patient.
 
-No collection group queries or custom composite indexes are required for setup. Reads follow the user's membership indexes to authorized documents. Later tracker/history queries must add any indexes they actually require.
+No collection group queries or custom composite indexes are required. Reads follow the user's membership indexes to authorized documents. The bounded history query filters and orders by the single `localDate` field within one patient.
 
-The standalone demo route has been removed. The reusable tracker UI remains ready for its Stage 4 connection; its sample fixture exists only under `test/fixtures`. Until that connection is implemented, Today shows the saved patient setup rather than accepting disposable care inputs.
+The standalone demo route and legacy daily-entry runtime have been removed. The reusable tracker fixture exists only under `test/fixtures`.
 
 ## Invitations and approval (Stage 3)
 

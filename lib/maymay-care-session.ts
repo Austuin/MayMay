@@ -16,7 +16,7 @@ const emptyData = (): TrackerData => ({ trackers: [], answers: {}, spontaneous: 
 export function careScope(connection: FirebaseConnection) {
   return 'maymay.care.v2.' + encodeURIComponent(JSON.stringify([
     connection.app.options.projectId, connection.dataGeneration, connection.user.uid,
-    connection.profile.familyId, connection.childId,
+    connection.profile.familyId, connection.patientId,
   ]));
 }
 
@@ -91,14 +91,14 @@ export class CareRecordSession {
       return;
     }
     this.emit();
-    this.listeners.push(onSnapshot(careCollection(this.connection.db, this.connection.profile.familyId, this.connection.childId, 'tracker'),
+    this.listeners.push(onSnapshot(careCollection(this.connection.db, this.connection.profile.familyId, this.connection.patientId, 'tracker'),
       { includeMetadataChanges: true }, snapshot => {
         if (this.stopped || snapshot.metadata.fromCache || snapshot.metadata.hasPendingWrites) return;
         this.trackers = preserveNewer(this.trackers, snapshot.docs.map(item => trackerFromDocument(item.data())), item => item.trackerId);
         this.loadedTrackers = true;
         this.cache(); this.emit(); this.schedule();
       }, error => this.fail(error)));
-    this.listeners.push(onSnapshot(query(careCollection(this.connection.db, this.connection.profile.familyId, this.connection.childId, 'observation'),
+    this.listeners.push(onSnapshot(query(careCollection(this.connection.db, this.connection.profile.familyId, this.connection.patientId, 'observation'),
       where('localDate', '==', this.date)), { includeMetadataChanges: true }, snapshot => {
         if (this.stopped || snapshot.metadata.fromCache || snapshot.metadata.hasPendingWrites) return;
         this.observations = [...this.observations.filter(item => item.localDate !== this.date),
@@ -149,6 +149,11 @@ export class CareRecordSession {
     }
     data.trackers = [...trackers.values()].map(item => ({ id: item.trackerId, title: item.title,
       description: item.description, kind: item.kind, days: item.days, deleted: Boolean(item.deletedAt) }));
+    data.historicalTrackers = [...observations.values()]
+      .filter(item => !item.deletedAt && item.localDate === this.date && item.kind === 'answer'
+        && item.trackerId && item.trackerSnapshot && item.value !== null)
+      .map(item => ({ id: item.trackerId!, ...item.trackerSnapshot!,
+        days: [new Date(`${this.date}T12:00:00`).getDay()], historical: true }));
     for (const item of observations.values()) {
       if (item.deletedAt) continue;
       if (item.kind === 'answer' && item.trackerId && item.value !== null) {
@@ -192,7 +197,8 @@ export class CareRecordSession {
     const newAnswers = after.answers[this.date] ?? {};
     for (const trackerId of new Set([...Object.keys(oldAnswers), ...Object.keys(newAnswers)])) {
       if (Object.is(oldAnswers[trackerId], newAnswers[trackerId])) continue;
-      const tracker = after.trackers.find(item => item.id === trackerId);
+      const tracker = after.historicalTrackers?.find(item => item.id === trackerId)
+        ?? after.trackers.find(item => item.id === trackerId);
       if (!tracker) continue;
       const value = newAnswers[trackerId] as TrackerAnswer | undefined;
       const id = dailyObservationId(trackerId, this.date);

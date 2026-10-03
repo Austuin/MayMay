@@ -11,13 +11,14 @@ import {
   RotateCcw,
   Trash2,
 } from 'lucide-react';
-import { createEventId, localDateValue } from '@/lib/maymay-types';
+import { createEventId, historyCutoffDate, localDateValue } from '@/lib/maymay-types';
 import { spontaneousRepeatKey, trackerValues, type MeltdownDetails, type TrackerAnswer, type TrackerDefinition, type TrackerKind } from '@/lib/maymay-schema';
 
 type Answer = TrackerAnswer;
 type Tracker = TrackerDefinition & {
   id: string;
   deleted?: boolean;
+  historical?: boolean;
 };
 export type Spontaneous = {
   id: string;
@@ -59,6 +60,7 @@ function dateLabel(value: string) {
 
 export type TrackerData = {
   trackers: Tracker[];
+  historicalTrackers?: Tracker[];
   answers: Record<string, Record<string, Answer>>;
   spontaneous: Spontaneous[];
 };
@@ -88,7 +90,7 @@ export function TodayTracker({ patientName, date, onDateChange, data, onChange, 
   const setAnswers = (value: SetStateAction<TrackerData['answers']>) => update('answers', value);
   const setSpontaneous = (value: SetStateAction<Spontaneous[]>) => update('spontaneous', value);
   function changeDate(value: string) {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || value > today) return;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || value > today || value < historyCutoffDate()) return;
     const parsed = new Date(value + 'T12:00:00');
     if (!Number.isFinite(parsed.getTime()) || localDateValue(parsed) !== value) return;
     onDateChange(value);
@@ -119,9 +121,13 @@ export function TodayTracker({ patientName, date, onDateChange, data, onChange, 
   const [lastRemoved, setLastRemoved] = useState<Spontaneous | null>(null);
 
   const active = trackers.filter((item) => !item.deleted);
-  const scheduled = active.filter((item) =>
-    item.days.includes(new Date(`${date}T12:00:00`).getDay()),
-  );
+  const snapshots = new Map((data.historicalTrackers ?? []).map(item => [item.id, item]));
+  const weekday = new Date(`${date}T12:00:00`).getDay();
+  const scheduled = [
+    ...active.filter(item => item.days.includes(weekday) || snapshots.has(item.id))
+      .map(item => snapshots.get(item.id) ?? item),
+    ...[...snapshots.values()].filter(item => !active.some(activeItem => activeItem.id === item.id)),
+  ];
   const todayAnswers = answers[date] ?? {};
   const answeredCount = scheduled.filter((item) =>
     Object.prototype.hasOwnProperty.call(todayAnswers, item.id),
@@ -271,9 +277,10 @@ export function TodayTracker({ patientName, date, onDateChange, data, onChange, 
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                <button aria-label="Previous day" className="size-11 rounded-xl border bg-card" onClick={() => stepDate(-1)}><ChevronLeft className="mx-auto size-5" /></button>
+                <button aria-label="Previous day" disabled={date <= historyCutoffDate()} className="size-11 rounded-xl border bg-card disabled:opacity-40" onClick={() => stepDate(-1)}><ChevronLeft className="mx-auto size-5" /></button>
                 <input
                   aria-label="Entry date"
+                  min={historyCutoffDate()}
                   max={today}
                   type="date"
                   className="h-11 rounded-xl border bg-card px-3 text-sm"
@@ -339,7 +346,7 @@ export function TodayTracker({ patientName, date, onDateChange, data, onChange, 
                         )}
                       </div>
                       <span className="rounded-full bg-muted px-3 py-1 text-xs text-muted-foreground">
-                        {hasAnswer ? 'Answered' : 'Unanswered'}
+                        {item.historical ? 'Saved on this day' : hasAnswer ? 'Answered' : 'Unanswered'}
                       </span>
                     </div>
                     <fieldset disabled={readOnly} aria-label={`${item.title} answer`} className="disabled:opacity-70">
