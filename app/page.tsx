@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { ThemeToggle } from '@/components/theme-toggle';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -113,6 +114,7 @@ function AccessScreen({
         <div className="access-brand">
           <span><HeartHandshake aria-hidden="true" /></span>
           <div><b>MayMay</b><small>Daily care notes</small></div>
+          <ThemeToggle />
         </div>
         {hostUnavailable ? (
           <div className="access-message">
@@ -524,7 +526,7 @@ export default function HomePage() {
   return (
     <main className="min-h-screen bg-background text-foreground">
       <header className="app-header">
-        <div className="mx-auto flex w-full max-w-[1160px] items-center justify-between gap-4 px-4 py-4 sm:px-6 lg:px-8">
+        <div className="mx-auto flex w-full max-w-[1160px] flex-wrap items-center justify-between gap-4 px-4 py-4 sm:px-6 lg:px-8">
           <div className="flex items-center gap-3">
             <div className="brand-mark" aria-hidden="true"><HeartHandshake className="size-5" strokeWidth={2.2} /></div>
             <div>
@@ -533,6 +535,7 @@ export default function HomePage() {
             </div>
           </div>
           <div className="header-actions">
+            <ThemeToggle />
             {firebaseConnection?.families.some(family => family.role === 'Primary') && <details className="relative">
               <summary className="flex cursor-pointer items-center gap-1 rounded-md border px-2 py-2 text-sm" aria-label={`Approval notifications: ${pendingRequests.length}`}>
                 <Bell className="size-4" />{pendingRequests.length > 0 && <b>{pendingRequests.length}</b>}

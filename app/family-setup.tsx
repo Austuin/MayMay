@@ -1,4 +1,5 @@
 'use client';
+import { ThemeToggle } from '@/components/theme-toggle';
 
 import { useState, type FormEvent } from 'react';
 import { HeartHandshake, LogOut } from 'lucide-react';
@@ -47,7 +48,7 @@ export function FamilySetup({
       <div className="mx-auto max-w-xl space-y-5">
         <header className="flex items-center justify-between">
           <div className="flex items-center gap-2 font-heading text-xl font-bold"><HeartHandshake /> MayMay</div>
-          <button className="flex items-center gap-2 text-sm" onClick={onSignOut}><LogOut className="size-4" /> Sign out</button>
+          <div className="flex items-center gap-3"><ThemeToggle /><button className="flex items-center gap-2 text-sm" onClick={onSignOut}><LogOut className="size-4" /> Sign out</button></div>
         </header>
         <section className="rounded-2xl border bg-card p-6 shadow-sm">
           {!family && step === 'choose' ? (
