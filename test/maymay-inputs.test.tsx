@@ -29,6 +29,12 @@ vi.mock('@/lib/maymay-firebase', () => ({
 vi.mock('@/hooks/use-care-sync', () => ({
   useCareSync: () => ({ entries: [], status: 'saved', message: '', conflicts: [], getEntries: () => [], replaceEntry: mocks.save, stop: vi.fn() }),
 }));
+vi.mock('@/hooks/use-care-records', () => ({
+  useCareRecords: () => ({
+    data: { trackers: [{ id: 'mood', title: 'Morning Mood', description: 'How was the morning?', kind: 'mood', days: [0, 1, 2, 3, 4, 5, 6] }], answers: {}, spontaneous: [] },
+    status: 'saved', message: 'Saved', conflicts: [], change: mocks.save, retry: vi.fn(), choose: vi.fn(),
+  }),
+}));
 
 const originalCrypto = globalThis.crypto;
 beforeEach(() => { mocks.connection = mocks.makeConnection(); mocks.save.mockClear(); localStorage.clear(); sessionStorage.clear(); });
@@ -54,12 +60,11 @@ describe('MayMay Today inputs', () => {
     expect(ids[0]).not.toBe(ids[1]);
   });
 
-  it('shows the connected patient and saved setup without a demo tracking interface', async () => {
+  it('shows the connected patient and recurring tracker', async () => {
     render(<HomePage />);
-    await screen.findByText("Today's check-in");
-    expect(screen.getByRole('heading', { name: 'Sam' })).toBeTruthy();
-    expect(screen.getByText(/Your family and patient setup is saved/)).toBeTruthy();
-    expect(screen.queryByLabelText('Morning Mood mood')).toBeNull();
+    await screen.findByLabelText('Morning Mood mood');
+    expect(screen.getByText(/Sam ·/)).toBeTruthy();
+    expect(screen.getByText('How was the morning?')).toBeTruthy();
     expect(mocks.save).not.toHaveBeenCalled();
   });
 });

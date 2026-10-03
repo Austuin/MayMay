@@ -30,6 +30,8 @@ describe('tracker UI preview with isolated mock data', () => {
       target: { value: 'Good' },
     });
     fireEvent.click(screen.getByLabelText('Increase Bowel Movements'));
+    fireEvent.change(screen.getByLabelText('Bowel Movements count'), { target: { value: '0' } });
+    expect((screen.getByLabelText('Bowel Movements count') as HTMLInputElement).value).toBe('0');
     const schoolCard = screen
       .getByText('Went to School on Time')
       .closest('article')!;
@@ -161,14 +163,14 @@ describe('tracker UI preview with isolated mock data', () => {
   it('suggests making a repeated unexpected event a regular tracker', () => {
     render(<TrackerPreview />);
     fireEvent.change(screen.getByLabelText('Entry date'), { target: { value: '2026-10-01' } });
-    for (let index = 0; index < 3; index += 1) {
+    for (let index = 0; index < 4; index += 1) {
       fireEvent.click(screen.getByRole('button', { name: 'Add spontaneous event' }));
       fireEvent.change(screen.getByLabelText('What happened?'), {
         target: { value: 'Calm bedtime' },
       });
       fireEvent.click(screen.getByRole('button', { name: 'Save event' }));
     }
-    expect(screen.getByText(/has been logged three times/)).toBeTruthy();
+    expect(screen.getByText(/has been logged four times/)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Make a tracker' }));
     expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe(
       'Calm bedtime',
@@ -179,6 +181,6 @@ describe('tracker UI preview with isolated mock data', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save tracker' }));
     fireEvent.click(screen.getByRole('button', { name: 'Back to check-in' }));
     expect(screen.getByText('Calm bedtime', { selector: 'h3' })).toBeTruthy();
-    expect(screen.queryByText(/has been logged three times/)).toBeNull();
+    expect(screen.queryByText(/has been logged four times/)).toBeNull();
   });
 });

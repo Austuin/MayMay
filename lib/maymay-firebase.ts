@@ -9,7 +9,7 @@ import {
 } from 'firebase/firestore';
 import type { FirebaseWebConfig } from './maymay-types';
 import type { FamilyRole, PatientRecord } from './maymay-access';
-import { collections, patientValues, type AdminRecord, type PatientFields, type UserRecord } from './maymay-schema';
+import { collections, patientValues, type AdminRecord, type PatientFields, type TrackerDefinition, type UserRecord } from './maymay-schema';
 import { assertDataGeneration, readDataConfiguration } from './maymay-database';
 export type { PatientFields } from './maymay-schema';
 
@@ -209,6 +209,20 @@ export async function createPatient(connection: FirebaseConnection, familyId: st
   batch.update(doc(connection.db, 'families', familyId, 'memberships', connection.user.uid), {
     patientIds: arrayUnion(patientRef.id),
   });
+  const starters: TrackerDefinition[] = [
+    { title: 'Morning Mood', description: 'How was the morning?', kind: 'mood', days: [0, 1, 2, 3, 4, 5, 6] },
+    { title: 'Bowel Movements', description: 'How many times did they go today?', kind: 'count', days: [0, 1, 2, 3, 4, 5, 6] },
+    { title: 'Went to School on Time', description: 'Did they arrive on time?', kind: 'good', days: [1, 2, 3, 4, 5] },
+  ];
+  for (const starter of starters) {
+    const trackerRef = doc(collection(patientRef, collections.trackers));
+    batch.set(trackerRef, {
+      ...starter, trackerId: trackerRef.id, familyId, patientId: patientRef.id,
+      dataGeneration: connection.dataGeneration, createdBy: connection.user.uid,
+      updatedBy: connection.user.uid, createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+      revision: 1, deletedAt: null,
+    });
+  }
   await batch.commit();
   const refreshed = await refreshFirebaseConnection(connection, { familyId, patientId: patientRef.id });
   return selectFamilyPatient(refreshed, familyId, patientRef.id);

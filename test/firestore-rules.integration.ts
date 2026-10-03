@@ -5,7 +5,7 @@ import { createInvitationHandler, createInvitationService } from '../scripts/fam
 import { readFile } from 'node:fs/promises';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { assertFails, assertSucceeds, initializeTestEnvironment, type RulesTestEnvironment } from '@firebase/rules-unit-testing';
-import { deleteDoc, doc, getDoc, setDoc, Timestamp, updateDoc, type Firestore } from 'firebase/firestore';
+import { collection, deleteDoc, doc, getDoc, getDocs, setDoc, Timestamp, updateDoc, type Firestore } from 'firebase/firestore';
 import type { FirebaseConnection } from '../lib/maymay-firebase';
 import { createFamilyFoundation } from '../lib/maymay-access';
 import { createFamily, createPatient, selectFamilyPatient, updatePatient } from '../lib/maymay-firebase';
@@ -15,6 +15,7 @@ import {
   restoreFamilyMember, rotateFamilyCode,
 } from '../lib/maymay-invitations';
 import { commitEventMutations, recordFromDocument } from '../lib/maymay-sync-firebase';
+import { CareConflict, commitCareMutation, type CareMutation } from '../lib/maymay-care-records';
 import { mutationsForEdit, SaveConflict, type EventMutation } from '../lib/maymay-sync-model';
 import { emptyEntry } from '../lib/maymay-types';
 import type { EventRecord } from '../lib/maymay-events';
@@ -113,6 +114,9 @@ describe('multi-family access foundation', () => {
     expect(patient.patient?.supportNeeds).toBe('Allow extra response time');
     const patientRef = doc(creatorDb, 'families', first.profile.familyId, 'patients', patient.childId);
     expect((await getDoc(patientRef)).data()?.birthdate).toBe('2018-01-02');
+    const starters = (await getDocs(collection(patientRef, 'trackers'))).docs.map(item => item.data());
+    expect(starters.map(item => item.title).sort()).toEqual(['Bowel Movements', 'Morning Mood', 'Went to School on Time']);
+    expect(starters.every(item => item.revision === 1 && item.deletedAt === null)).toBe(true);
     const edited = await updatePatient(patient, { name: 'Sam Updated', sex: 'Female' });
     expect(edited.patient?.name).toBe('Sam Updated');
     expect((await getDoc(patientRef)).data()?.ethnicity).toBeUndefined();
@@ -472,5 +476,39 @@ describe('concurrent caregiver saves with real Firestore rules', () => {
     await assertFails(commitEventMutations(connection('outsider'), [editNote('Cross-family')]));
     await assertFails(commitEventMutations(connection('pending'), [editNote('Unapproved')]));
     expect((await read(mutation.eventId))?.data.text).toBe('Protected');
+  });
+});
+
+describe('tracker and observation saves with real Firestore rules', () => {
+  const tracker: CareMutation = {
+    id: 'create-tracker', target: 'tracker', recordId: 'school', expectedRevision: null,
+    predecessor: null, queuedAt: 1,
+    after: { title: 'School on time', description: 'Did they arrive on time?', kind: 'good', days: [1, 2, 3, 4, 5] },
+  };
+  const answer = (uid: string, value: boolean | null, expectedRevision: number | null): CareMutation => ({
+    id: `${uid}-${value}-${expectedRevision}`, target: 'observation', recordId: `school_${day}`,
+    expectedRevision, predecessor: null, queuedAt: 2,
+    after: value === null ? null : { localDate: day, occurredAt: `${day}T12:00:00Z`, kind: 'answer',
+      trackerId: 'school', trackerSnapshot: { title: 'School on time', description: 'Did they arrive on time?', kind: 'good' },
+      value, title: 'School on time', note: '', details: {} },
+  });
+
+  it('shares No and Yes across caregivers while protecting revisions, snapshots, and Viewer access', async () => {
+    await commitCareMutation(connection('alice'), tracker);
+    await commitCareMutation(connection('alice'), answer('alice', false, null));
+    const path = `families/maymay/patients/maymay/observations/school_${day}`;
+    expect((await getDoc(doc(connection('bob').db, path))).data()?.value).toBe(false);
+    await commitCareMutation(connection('bob'), answer('bob', true, 1));
+    await expect(commitCareMutation(connection('alice'), answer('alice', false, 1))).rejects.toBeInstanceOf(CareConflict);
+    expect((await getDoc(doc(connection('alice').db, path))).data()).toMatchObject({
+      value: true, revision: 2, trackerSnapshot: { title: 'School on time', kind: 'good' },
+    });
+    await expect(commitCareMutation(connection('viewer', 'maymay', 'viewer'), answer('viewer', false, 2))).rejects.toThrow(/cannot change/);
+    await assertFails(updateDoc(doc(connection('viewer').db, path), { value: false }));
+    await assertFails(commitCareMutation(connection('pending'), answer('pending', false, 2)));
+    await assertFails(getDoc(doc(connection('outsider').db, path)));
+    await commitCareMutation(connection('bob'), answer('bob', null, 2));
+    expect((await getDoc(doc(connection('alice').db, path))).data()).toMatchObject({ revision: 3, value: true });
+    expect((await getDoc(doc(connection('alice').db, path))).data()?.deletedAt).toBeTruthy();
   });
 });

@@ -56,6 +56,8 @@ export type RecordAudit = {
   familyId: string; patientId: string; dataGeneration: string;
   createdBy: string; updatedBy: string; createdAt: unknown; updatedAt: unknown;
   revision: number; deletedAt: unknown | null;
+  /** Internal durable-save receipt identifier; absent on starter trackers. */
+  mutationId?: string;
 };
 export type TrackerDefinition = {
   title: string; description: string; kind: TrackerKind; days: number[];
