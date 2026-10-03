@@ -445,3 +445,21 @@ describe('tracker and observation saves with real Firestore rules', () => {
     }));
   });
 });
+
+describe('maintenance rules', () => {
+  it('allows signed-in activation status reads and blocks all client writes', async () => {
+    const maintenance = await initializeTestEnvironment({ projectId: 'demo-maymay-maintenance',
+      firestore: { rules: await readFile('firebase.maintenance.rules', 'utf8') } });
+    try {
+      await maintenance.withSecurityRulesDisabled(async context => {
+        await setDoc(doc(context.firestore(), 'system/data'), { schemaVersion: 1, generation: 'old' });
+        await setDoc(doc(context.firestore(), 'users/owner'), { name: 'Owner' });
+      });
+      const client = maintenance.authenticatedContext('owner').firestore();
+      await assertSucceeds(getDoc(doc(client, 'system/data')));
+      await assertFails(getDoc(doc(client, 'users/owner')));
+      await assertFails(setDoc(doc(client, 'users/new'), { name: 'Blocked' }));
+      await assertFails(updateDoc(doc(client, 'system/data'), { generation: 'forged' }));
+    } finally { await maintenance.clearFirestore(); await maintenance.cleanup(); }
+  });
+});

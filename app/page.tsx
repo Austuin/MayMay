@@ -10,6 +10,7 @@ import {
   HeartHandshake,
   History,
   Home,
+  Info,
   LoaderCircle,
   LogOut,
   Settings2,
@@ -52,8 +53,9 @@ import { useCareRecords } from '@/hooks/use-care-records';
 import { useObservationHistory } from '@/hooks/use-observation-history';
 import { useSpontaneousCatalog } from '@/hooks/use-spontaneous-catalog';
 import { historyCutoffDate, localDateValue } from '@/lib/maymay-types';
+import { ActivationPendingError } from '@/lib/maymay-database';
 
-type SyncState = 'starting' | 'signed-out' | 'connecting' | 'connected' | 'error' | 'host-error';
+type SyncState = 'starting' | 'signed-out' | 'connecting' | 'connected' | 'error' | 'host-error' | 'maintenance';
 
 function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
@@ -225,7 +227,7 @@ export default function HomePage() {
       } catch (error) {
         if (!alive) return;
         setAuthError(error instanceof Error ? error.message : 'Please sign in again.');
-        setSyncState('signed-out');
+        setSyncState(error instanceof ActivationPendingError ? 'maintenance' : 'signed-out');
       }
     };
     void start();
@@ -324,6 +326,7 @@ export default function HomePage() {
         setAccessMode('sign-in');
         setSyncState('connected');
       } catch (error) {
+        if (error instanceof ActivationPendingError) { setSyncState('maintenance'); return; }
         const code = (error as { code?: string })?.code;
         const message = code === 'auth/email-already-in-use'
           ? 'An account already uses this email. Return to Sign in instead.'
@@ -357,7 +360,7 @@ export default function HomePage() {
       setSyncState('connected');
     } catch (error) {
       setAuthError(error instanceof Error ? error.message : 'Sign-in failed. Check the account details.');
-      setSyncState('signed-out');
+      setSyncState(error instanceof ActivationPendingError ? 'maintenance' : 'signed-out');
     } finally {
       setAuthBusy(false);
     }
@@ -375,6 +378,7 @@ export default function HomePage() {
       setAccessMode('sign-in');
       setSyncState('connected');
     } catch (error) {
+      if (error instanceof ActivationPendingError) { setSyncState('maintenance'); return; }
       const code = (error as { code?: string })?.code;
       const message = code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request'
         ? 'Google sign-in was closed before it finished.'
@@ -483,6 +487,14 @@ export default function HomePage() {
         onSubmit={handleSignIn}
       />
     );
+  }
+
+  if (syncState === 'maintenance') {
+    return <main className="access-shell"><section className="access-card">
+      <div className="access-message"><Info aria-hidden="true" /><div><h1>MayMay setup or maintenance</h1>
+        <p>Data activation is pending. Ask the host owner to finish setup, then refresh this page.</p></div></div>
+      <Button variant="outline" className="mt-5" onClick={() => window.location.reload()}>Refresh</Button>
+    </section></main>;
   }
 
   if (firebaseConnection && !firebaseConnection.patientId) {
