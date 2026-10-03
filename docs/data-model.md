@@ -1,6 +1,6 @@
 # MayMay 1.0 data foundation
 
-Stages 1–2 define the production records and connect account/family/patient setup. Nothing in these stages deploys rules, resets data, or activates the live database. Invitations are completed in Stage 3; tracker and observation persistence is connected to Today in Stage 4.
+Stages 1–3 define the production records and connect account/family/patient setup and trusted invitations. Nothing in these stages deploys rules, resets data, or activates the live database. Tracker and observation persistence is connected to Today in Stage 4.
 
 ## Firestore layout
 
@@ -31,8 +31,18 @@ Trackers define the schedule/input. Observations hold the recorded answer or spo
 
 The release process must explicitly create `system/data` with `{ schemaVersion: 1, generation: "<new unique release-reset identifier>" }` after the controlled reset. There is no automatic fallback or live initializer in the browser. Setup reads this metadata from the server before writing application records, and reports that activation is pending if it is missing. User/Family records carry `dataGeneration`; tracker/observation rules also enforce it. Client setup mutations recheck the generation and require sign-in again after a reset. Stored context selection and care cache scopes include generation.
 
-Ordinary clients cannot write system metadata or invitation records. The existing `joinSettings` flow remains transitional until Stage 3 replaces it with trusted invitation hash/expiry validation. Legacy `events` readers remain temporarily under the canonical patient path for later history replacement; they are not the new Observation model. `FirebaseConnection.childId` remains a compatibility alias for the selected patient ID until those readers are retired.
+Ordinary clients cannot write system metadata or invitation records. The legacy `joinSettings` flow is denied. The host API owns invitation hashes, expiry, rotation, join attempts, pending requests, approval, rejection, and cancellation. Legacy `events` readers remain temporarily under the canonical patient path for later history replacement; they are not the new Observation model. `FirebaseConnection.childId` remains a compatibility alias for the selected patient ID until those readers are retired.
 
 No collection group queries or custom composite indexes are required for setup. Reads follow the user's membership indexes to authorized documents. Later tracker/history queries must add any indexes they actually require.
 
 The standalone demo route has been removed. The reusable tracker UI remains ready for its Stage 4 connection; its sample fixture exists only under `test/fixtures`. Until that connection is implemented, Today shows the saved patient setup rather than accepting disposable care inputs.
+
+## Invitations and approval (Stage 3)
+
+A Family's server-owned `activeInviteId` points to its latest invitation. Invitation records contain a SHA-256 hash of a random 128-bit secret, a 7-day expiry, proposed patient IDs, creator and generation. Rotation marks the previous invitation revoked atomically. Plaintext codes are returned only by generation, never stored or returned by status reads. The browser sees only invitation metadata after reopening.
+
+The host verifies Firebase ID tokens with revocation checking, current data generation and current Active Primary membership for management. Global Admin status does not bypass this. A join request requires a verified email and relationship; the host copies name/email from the verified token, records `requesterEmailVerified`, `invitationId` and `proposedPatientIds`, and updates the User's family index in the same transaction. Pending requests grant no patient access. Retrying the same request preserves its original date and scope. A rejected request can be resubmitted with a valid current code.
+
+Primary notifications show name, verified email, relationship, date and whether the invitation has expired or been replaced. The Primary confirms patient access and chooses Caregiver or Viewer. Approval creates patient relationships and records `approvedBy`/`approvedAt`; rejection records `reviewedBy`/`reviewedAt`. The request must still be Pending within the transaction. Cancellation removes only a still-pending membership and its User index entry. Previously rejected or disabled users cannot bypass review by writing membership records directly. Existing protected-Primary rules remain in force.
+
+An internal, client-inaccessible `system/invitationLimits/users/{UserId}` document limits code attempts to 10 per verified account per 15 minutes. This operational state is cleared with the care-data reset; it is not an Admin assignment. The API has no cross-origin allowance, accepts JSON plus bearer authentication, caps request bodies at 8 KB, and does not log codes or tokens.

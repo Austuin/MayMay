@@ -1,8 +1,9 @@
 import {
-  arrayRemove, arrayUnion, collection, deleteField, doc, getDoc, getDocs,
-  onSnapshot, query, serverTimestamp, setDoc, updateDoc, where, writeBatch,
+  collection, doc, getDocs,
+  onSnapshot, query, updateDoc, where, writeBatch,
 } from 'firebase/firestore';
 import { refreshFirebaseConnection, type FirebaseConnection, type FamilyOption } from './maymay-firebase';
+import { reload, sendEmailVerification } from 'firebase/auth';
 import type { FamilyRole, MembershipStatus } from './maymay-access';
 
 export type FamilyMember = {
@@ -15,6 +16,9 @@ export type FamilyMember = {
   requesterEmail: string;
   relationship?: string;
   requestedAt?: string;
+  invitationId?: string;
+  proposedPatientIds?: string[];
+  requesterEmailVerified?: boolean;
 };
 export type PendingRequest = FamilyMember & { familyName: string };
 
@@ -22,10 +26,6 @@ function requirePrimary(connection: FirebaseConnection, familyId: string): Famil
   const family = connection.families.find(item => item.familyId === familyId);
   if (!family || family.role !== 'Primary') throw new Error('Only a Primary caregiver can manage this family.');
   return family;
-}
-
-function settingsRef(connection: FirebaseConnection, familyId: string) {
-  return doc(connection.db, 'families', familyId, 'joinSettings', 'current');
 }
 
 function membershipRef(connection: FirebaseConnection, familyId: string, userId: string) {
@@ -36,55 +36,50 @@ function accessRef(connection: FirebaseConnection, familyId: string, patientId: 
   return doc(connection.db, 'families', familyId, 'patients', patientId, 'relationships', userId);
 }
 
-function codeFor(familyId: string, secret: string) {
-  return `MM1.${familyId}.${secret}`;
+export type InvitationStatus = { inviteId: string; expiresAt: string; revoked: boolean; patientIds: string[] };
+
+async function invitationRequest<T>(connection: FirebaseConnection, action: string, input: Record<string, unknown>): Promise<T> {
+  const token = await connection.user.getIdToken();
+  let response: Response;
+  try {
+    response = await fetch('/api/family-invitations/' + action, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+      cache: 'no-store', body: JSON.stringify({ ...input, dataGeneration: connection.dataGeneration }),
+    });
+  } catch { throw new Error('Could not reach the MayMay host. Check your connection and try again.'); }
+  const result = await response.json().catch(() => { throw new Error('The MayMay host does not have family invitations available yet.'); });
+  if (!response.ok) throw new Error(result && typeof result === 'object' && 'error' in result && typeof result.error === 'string'
+    ? result.error : 'Could not update family access.');
+  return result as T;
 }
 
-export async function getFamilyCode(connection: FirebaseConnection, familyId: string) {
+export async function getFamilyInvitation(connection: FirebaseConnection, familyId: string) {
   requirePrimary(connection, familyId);
-  const snapshot = await getDoc(settingsRef(connection, familyId));
-  return snapshot.exists() ? codeFor(familyId, String(snapshot.data().secret)) : null;
+  return invitationRequest<InvitationStatus | null>(connection, 'status', { familyId });
 }
 
-export async function rotateFamilyCode(connection: FirebaseConnection, familyId: string) {
+export async function rotateFamilyCode(connection: FirebaseConnection, familyId: string, patientIds: string[]) {
   requirePrimary(connection, familyId);
-  if (!globalThis.crypto?.getRandomValues) throw new Error('This browser cannot generate a secure Family Code.');
-  const bytes = globalThis.crypto.getRandomValues(new Uint8Array(16));
-  const secret = Array.from(bytes, value => value.toString(16).padStart(2, '0')).join('');
-  await setDoc(settingsRef(connection, familyId), { familyId, secret, updatedAt: serverTimestamp() });
-  return codeFor(familyId, secret);
+  return invitationRequest<InvitationStatus & { code: string }>(connection, 'rotate', { familyId, patientIds });
+}
+
+export async function sendVerificationEmail(connection: FirebaseConnection) {
+  await sendEmailVerification(connection.user);
+}
+
+export async function checkEmailVerification(connection: FirebaseConnection) {
+  await reload(connection.user);
+  await connection.user.getIdToken(true);
+  return connection.user.emailVerified;
 }
 
 export async function requestFamilyAccess(connection: FirebaseConnection, code: string, relationship = '') {
-  const match = /^MM1\.([A-Za-z0-9_-]{1,100})\.([0-9a-f]{32})$/.exec(code.trim());
-  if (!match) throw new Error('Enter the complete Family Code. Ask a Primary caregiver to copy it again if needed.');
-  const [, familyId, joinSecret] = match;
-  const ref = membershipRef(connection, familyId, connection.user.uid);
-  const existing = await getDoc(ref);
-  if (existing.exists() && existing.data().status !== 'Rejected') {
-    throw new Error(existing.data().status === 'Pending' ? 'Your request is already waiting for approval.' : 'This account already has a membership in that family.');
-  }
-  const batch = writeBatch(connection.db);
-  batch.set(ref, {
-    familyId, userId: connection.user.uid, role: 'Caregiver', status: 'Pending',
-    patientIds: [], requestedAt: serverTimestamp(), relationship: relationship.trim(),
-    requesterName: connection.user.displayName?.trim() || connection.user.email || 'Caregiver',
-    requesterEmail: connection.user.email ?? '', joinSecret,
-  });
-  batch.update(doc(connection.db, 'users', connection.user.uid), {
-    familyIds: arrayUnion(familyId), dateUpdated: serverTimestamp(),
-  });
-  await batch.commit();
+  await invitationRequest(connection, 'request', { code: code.trim(), relationship: relationship.trim() });
   return refreshFirebaseConnection(connection);
 }
 
 export async function cancelFamilyRequest(connection: FirebaseConnection, familyId: string) {
-  const batch = writeBatch(connection.db);
-  batch.delete(membershipRef(connection, familyId, connection.user.uid));
-  batch.update(doc(connection.db, 'users', connection.user.uid), {
-    familyIds: arrayRemove(familyId), dateUpdated: serverTimestamp(),
-  });
-  await batch.commit();
+  await invitationRequest(connection, 'cancel', { familyId });
   return refreshFirebaseConnection(connection);
 }
 
@@ -100,6 +95,8 @@ export async function listFamilyMembers(connection: FirebaseConnection, familyId
       requesterEmail: String(value.requesterEmail || (item.id === connection.user.uid ? connection.user.email || '' : '')),
       relationship: String(value.relationship || ''),
       requestedAt: value.requestedAt?.toDate?.().toISOString(),
+      invitationId: value.invitationId, proposedPatientIds: value.proposedPatientIds,
+      requesterEmailVerified: value.requesterEmailVerified === true,
     };
   });
 }
@@ -129,6 +126,9 @@ export function watchPendingRequests(connection: FirebaseConnection, receive: (r
           patientIds: Array.isArray(value.patientIds) ? value.patientIds : [],
           requesterName: String(value.requesterName || 'Caregiver'),
           requesterEmail: String(value.requesterEmail || ''),
+          relationship: String(value.relationship || ''), requestedAt: value.requestedAt?.toDate?.().toISOString(),
+          invitationId: value.invitationId, proposedPatientIds: value.proposedPatientIds,
+          requesterEmailVerified: value.requesterEmailVerified === true,
         };
       }));
       receive([...byFamily.values()].flat());
@@ -153,31 +153,12 @@ export async function approveFamilyRequest(
 ) {
   const family = requirePrimary(connection, familyId);
   const ids = selectedPatients(family, patientIds, true);
-  const ref = membershipRef(connection, familyId, userId);
-  const snapshot = await getDoc(ref);
-  if (!snapshot.exists() || snapshot.data().status !== 'Pending') throw new Error('That request is no longer pending.');
-  const batch = writeBatch(connection.db);
-  batch.update(ref, {
-    role, status: 'Active', patientIds: ids, dateJoined: serverTimestamp(),
-    approvedAt: serverTimestamp(), approvedBy: connection.user.uid, joinSecret: deleteField(),
-  });
-  for (const patientId of ids) {
-    batch.set(accessRef(connection, familyId, patientId, userId), {
-      familyId, patientId, userId, relationship: String(snapshot.data().relationship || ''), canAccess: true,
-    });
-  }
-  await batch.commit();
+  await invitationRequest(connection, 'approve', { familyId, userId, role, patientIds: ids });
 }
 
 export async function rejectFamilyRequest(connection: FirebaseConnection, familyId: string, userId: string) {
   requirePrimary(connection, familyId);
-  const ref = membershipRef(connection, familyId, userId);
-  const snapshot = await getDoc(ref);
-  if (!snapshot.exists() || snapshot.data().status !== 'Pending') throw new Error('That request is no longer pending.');
-  await updateDoc(ref, {
-    status: 'Rejected', reviewedAt: serverTimestamp(),
-    reviewedBy: connection.user.uid, joinSecret: deleteField(),
-  });
+  await invitationRequest(connection, 'reject', { familyId, userId });
 }
 
 export async function setFamilyMemberRole(connection: FirebaseConnection, familyId: string, userId: string, role: FamilyRole) {

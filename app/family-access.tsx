@@ -4,9 +4,9 @@ import { useEffect, useState } from 'react';
 import type { FirebaseConnection, FamilyOption } from '@/lib/maymay-firebase';
 import {
   approveFamilyRequest, changeFamilyMemberPatients, disableFamilyMember,
-  getFamilyCode, listFamilyMembers, rejectFamilyRequest, restoreFamilyMember,
+  getFamilyInvitation, listFamilyMembers, rejectFamilyRequest, restoreFamilyMember,
   rotateFamilyCode, setFamilyMemberRole, transferProtectedPrimary,
-  type FamilyMember,
+  type FamilyMember, type InvitationStatus,
 } from '@/lib/maymay-invitations';
 import type { FamilyRole } from '@/lib/maymay-access';
 
@@ -25,16 +25,19 @@ function PatientChoices({ family, selected, onChange }: {
   </fieldset>;
 }
 
-function PendingRow({ connection, family, member, onAction }: {
+function PendingRow({ connection, family, member, invitation, onAction }: {
   connection: FirebaseConnection;
   family: FamilyOption;
   member: FamilyMember;
+  invitation: InvitationStatus | null;
   onAction: (action: () => Promise<unknown>, success: string) => Promise<void>;
 }) {
   const [role, setRole] = useState<'Caregiver' | 'Viewer'>('Caregiver');
-  const [selected, setSelected] = useState<string[]>(family.patients.length === 1 ? [family.patients[0].patientId] : []);
+  const [selected, setSelected] = useState<string[]>((member.proposedPatientIds ?? []).filter(id => family.patients.some(patient => patient.patientId === id)));
   return <div className="space-y-3 rounded-xl border p-4">
     <div><b>{member.requesterName}</b><p className="text-sm text-muted-foreground">{member.requesterEmail || member.userId}</p></div>
+    <p className="text-xs text-muted-foreground">{member.requesterEmailVerified ? 'Email verified' : 'Email verification unavailable'}</p>
+    {member.invitationId && invitation && (member.invitationId !== invitation.inviteId || invitation.revoked || new Date(invitation.expiresAt).getTime() <= Date.now()) && <p className="text-sm text-muted-foreground">This request used a code that has since expired or been replaced. You can still review it.</p>}
     {member.relationship && <p className="text-sm">Relationship: {member.relationship}</p>}
     {member.requestedAt && <p className="text-sm text-muted-foreground">Requested {new Date(member.requestedAt).toLocaleDateString()}</p>}
     <label className="block text-sm font-medium">Approve as
@@ -106,17 +109,26 @@ export function FamilyAccess({ connection, onChanged }: {
   onChanged: () => void;
 }) {
   const family = connection.families.find(item => item.familyId === connection.profile.familyId);
-  const [code, setCode] = useState<string | null>(null);
+  const [issued, setIssued] = useState<{ familyId: string; generation: string; code: string; inviteId: string } | null>(null);
+  const [invitation, setInvitation] = useState<InvitationStatus | null>(null);
+  const [invitePatients, setInvitePatients] = useState<string[]>([]);
   const [members, setMembers] = useState<FamilyMember[]>([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const familyId = family?.role === 'Primary' ? family.familyId : '';
+  const code = issued?.familyId === familyId && issued.generation === connection.dataGeneration && issued.inviteId === invitation?.inviteId ? issued.code : null;
 
   useEffect(() => {
+    setIssued(null);
+    setInvitePatients(connection.families.find(item => item.familyId === familyId)?.patients.map(patient => patient.patientId) ?? []);
+  }, [familyId, connection.dataGeneration]);
+
+  useEffect(() => {
+    setMembers([]); setInvitation(null); setMessage('');
     if (!familyId) return;
     let alive = true;
-    Promise.all([getFamilyCode(connection, familyId), listFamilyMembers(connection, familyId)])
-      .then(([value, people]) => { if (alive) { setCode(value); setMembers(people); } })
+    Promise.all([getFamilyInvitation(connection, familyId), listFamilyMembers(connection, familyId)])
+      .then(([value, people]) => { if (alive) { setInvitation(value); setMembers(people); } })
       .catch(error => { if (alive) setMessage(error instanceof Error ? error.message : 'Could not load family access.'); });
     return () => { alive = false; };
   }, [connection, familyId]);
@@ -126,8 +138,8 @@ export function FamilyAccess({ connection, onChanged }: {
   const others = members.filter(member => member.status === 'Active' || member.status === 'Disabled');
 
   async function reload() {
-    const [value, people] = await Promise.all([getFamilyCode(connection, family!.familyId), listFamilyMembers(connection, family!.familyId)]);
-    setCode(value); setMembers(people); onChanged();
+    const [value, people] = await Promise.all([getFamilyInvitation(connection, family!.familyId), listFamilyMembers(connection, family!.familyId)]);
+    setInvitation(value); setMembers(people); onChanged();
   }
 
   async function act(action: () => Promise<unknown>, success: string) {
@@ -140,30 +152,40 @@ export function FamilyAccess({ connection, onChanged }: {
 
   return <section className="space-y-6 rounded-2xl border bg-card p-6" aria-label="Family access">
     <div><h2 className="text-xl font-bold">Family access</h2><p className="text-sm text-muted-foreground">Only Primary caregivers can share codes or approve requests.</p></div>
+    <fieldset disabled={busy} className="space-y-6 disabled:opacity-60">
     <div className="space-y-3 rounded-xl bg-muted/40 p-4">
       <h3 className="font-semibold">Family Code</h3>
-      {code ? <input aria-label="Current Family Code" className="w-full rounded-md border bg-background p-2 font-mono text-xs" value={code} readOnly onFocus={event => event.target.select()} /> : <p className="text-sm text-muted-foreground">Generate a code when you are ready to invite someone.</p>}
+      <p className="text-sm text-muted-foreground">Codes expire after 7 days. Copy a new code now; it cannot be shown again after you leave this page.</p>
+      {invitation && <p className="text-sm">{invitation.revoked || new Date(invitation.expiresAt).getTime() <= Date.now() ? 'Code expired or revoked.' : 'Code active.'} Expires {new Date(invitation.expiresAt).toLocaleString()}.</p>}
+      <PatientChoices family={family} selected={invitePatients} onChange={setInvitePatients} />
+      <p className="text-xs text-muted-foreground">These patients are suggested for new requests. A Primary confirms access when approving.</p>
+      {code ? <input aria-label="Current Family Code" className="w-full rounded-md border bg-background p-2 font-mono text-xs" value={code} readOnly onFocus={event => event.target.select()} /> : <p className="text-sm text-muted-foreground">{invitation ? 'Generate a replacement if you need a code to share. Existing requests remain for review.' : 'Generate a code when you are ready to invite someone.'}</p>}
       <div className="flex flex-wrap gap-2">
         {code && <button className="rounded-md border px-4 py-2 text-sm" onClick={() => {
           if (!navigator.clipboard) { setMessage('Select and copy the code above.'); return; }
           void navigator.clipboard.writeText(code).then(() => setMessage('Family Code copied.')).catch(() => setMessage('Select and copy the code above.'));
         }}>Copy code</button>}
         <button className="rounded-md border px-4 py-2 text-sm" disabled={busy} onClick={() =>
-          void act(() => rotateFamilyCode(connection, family.familyId), code ? 'Code rotated. The old code can no longer create requests.' : 'Family Code generated.')
-        }>{code ? 'Rotate code' : 'Generate code'}</button>
+          void act(async () => {
+            const result = await rotateFamilyCode(connection, family.familyId, invitePatients);
+            setIssued({ familyId: family.familyId, generation: connection.dataGeneration, code: result.code, inviteId: result.inviteId });
+            setInvitation(result);
+          }, invitation ? 'Code replaced. The old code can no longer create requests.' : 'Family Code generated.')
+        }>{invitation ? 'Replace code' : 'Generate code'}</button>
       </div>
     </div>
     <div className="space-y-3">
       <div className="flex items-center justify-between gap-3"><h3 className="font-semibold">Notifications {pending.length ? `(${pending.length})` : ''}</h3>
         <button className="text-sm underline disabled:opacity-50" disabled={busy} onClick={() => { void act(async () => undefined, 'Requests refreshed.'); }}>Refresh requests</button>
       </div>
-      {pending.length ? pending.map(member => <PendingRow key={member.userId} connection={connection} family={family} member={member} onAction={act} />)
+      {pending.length ? pending.map(member => <PendingRow key={member.userId} connection={connection} family={family} member={member} invitation={invitation} onAction={act} />)
         : <p className="text-sm text-muted-foreground">No requests are waiting.</p>}
     </div>
     <div className="space-y-3">
       <h3 className="font-semibold">People</h3>
       {others.map(member => <MemberRow key={member.userId + member.status + member.role + member.patientIds.join(',')} connection={connection} family={family} member={member} onAction={act} />)}
     </div>
+    </fieldset>
     {message && <p role="status" className="text-sm">{message}</p>}
     {busy && <p className="text-sm text-muted-foreground">Saving…</p>}
   </section>;

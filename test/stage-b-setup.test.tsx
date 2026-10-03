@@ -60,7 +60,7 @@ vi.mock('@/hooks/use-care-sync', () => ({
 }));
 
 vi.mock('@/lib/maymay-invitations', () => ({
-  getFamilyCode: vi.fn(async () => null),
+  getFamilyInvitation: vi.fn(async () => null),
   listFamilyMembers: vi.fn(async () => []),
   listPendingRequests: vi.fn(async () => []),
   watchPendingRequests: vi.fn((_connection, receive) => { receive([]); return () => undefined; }),
