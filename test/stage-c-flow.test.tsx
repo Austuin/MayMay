@@ -89,6 +89,24 @@ describe('Stage C invitation controls', () => {
     expect(screen.getByRole('button', { name: 'Replace code' })).toBeTruthy();
   });
 
+  it('shows Primary member controls when the invitation endpoint is unavailable', async () => {
+    const owner = connection();
+    mocks.getCode.mockRejectedValueOnce(new Error('Family Codes are unavailable on this host.'));
+    mocks.setMembers([
+      { familyId: 'family-a', userId: 'owner', role: 'Primary', status: 'Active', patientIds: ['patient-a'], requesterName: 'Owner', requesterEmail: '' },
+      { familyId: 'family-a', userId: 'joining', role: 'Caregiver', status: 'Active', patientIds: ['patient-a'], requesterName: 'Joining', requesterEmail: 'joining@example.test' },
+    ]);
+    render(<FamilyAccess connection={owner} onChanged={vi.fn()} />);
+    expect(await screen.findByText('Joining')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Family members' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Requests to join' })).toBeTruthy();
+    expect(screen.getByText('Family Codes are unavailable on this host.')).toBeTruthy();
+    fireEvent.change(screen.getByRole('combobox', { name: 'Role' }), { target: { value: 'Primary' } });
+    await waitFor(() => expect(mocks.setRole).toHaveBeenCalledWith(owner, 'family-a', expect.objectContaining({ userId: 'joining' }), 'Primary'));
+    fireEvent.click(screen.getByRole('button', { name: 'Revoke access' }));
+    await waitFor(() => expect(mocks.disable).toHaveBeenCalledWith(owner, 'family-a', expect.objectContaining({ userId: 'joining' })));
+  });
+
   it('submits a pasted code, shows the pending request, and cancels it', async () => {
     const initial = connection('Caregiver');
     const pending = connection('Caregiver', [{ familyId: 'family-a', status: 'Pending' }]);

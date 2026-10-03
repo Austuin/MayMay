@@ -652,8 +652,8 @@ export default function HomePage() {
                 {familyMessage && <output role="status">{familyMessage}</output>}
               </CardContent>
             </Card>
-            {firebaseConnection && <JoinFamilyForm connection={firebaseConnection} onChanged={useConnection} />}
             {isMaster && firebaseConnection && <FamilyAccess connection={firebaseConnection} onChanged={() => { void refreshFamilyContext(); }} />}
+            {firebaseConnection && <JoinFamilyForm connection={firebaseConnection} onChanged={useConnection} />}
             {selectedFamily && firebaseConnection?.patient && <Card>
               <CardHeader><CardTitle className="text-xl font-bold">Patient details</CardTitle></CardHeader>
               <CardContent className="space-y-6">

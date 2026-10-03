@@ -105,8 +105,8 @@ export function FamilySetup({
             </>
           )}
         </section>
-        {(family || (step !== 'join' && (connection.requests ?? []).length > 0)) && <JoinFamilyForm connection={connection} onChanged={onChanged} />}
         {family?.role === 'Primary' && <FamilyAccess connection={connection} onChanged={onMembershipsChanged} />}
+        {(family || (step !== 'join' && (connection.requests ?? []).length > 0)) && <JoinFamilyForm connection={connection} onChanged={onChanged} />}
       </div>
     </main>
   );
