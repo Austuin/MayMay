@@ -4,7 +4,7 @@ import type { EventMutation } from './maymay-sync-model';
 
 export function careStorageScope(connection: FirebaseConnection) {
   return 'maymay.sync.v1.' + encodeURIComponent(JSON.stringify([
-    connection.app.options.projectId, connection.user.uid, connection.profile.familyId, connection.childId,
+    connection.app.options.projectId, connection.dataGeneration, connection.user.uid, connection.profile.familyId, connection.childId,
   ]));
 }
 

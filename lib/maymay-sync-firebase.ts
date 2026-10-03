@@ -5,7 +5,7 @@ import type { EventRecord } from './maymay-events';
 import { matchesExpected, SaveConflict, type EventMutation } from './maymay-sync-model';
 
 function events(connection: FirebaseConnection) {
-  return collection(connection.db, 'families', connection.profile.familyId, 'children', connection.childId, 'events');
+  return collection(connection.db, 'families', connection.profile.familyId, 'patients', connection.childId, 'events');
 }
 
 function iso(value: unknown) {

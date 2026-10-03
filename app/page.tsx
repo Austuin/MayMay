@@ -31,7 +31,6 @@ import {
 } from '@/components/ui/chart';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { TodayTracker, useTrackerDrafts } from './today-tracker';
 import { FamilySetup } from './family-setup';
 import { FamilyAccess } from './family-access';
 import { JoinFamilyForm } from './join-family-form';
@@ -217,8 +216,6 @@ export default function HomePage() {
   const [familyMessage, setFamilyMessage] = useState('');
   const [pendingRequests, setPendingRequests] = useState<PendingRequest[]>([]);
   const connectionRef = useRef<FirebaseConnection | null>(null);
-  const trackerScope = JSON.stringify([firebaseConnection?.app.options.projectId, firebaseConnection?.user.uid, firebaseConnection?.profile.familyId, firebaseConnection?.childId]);
-  const trackerDrafts = useTrackerDrafts(trackerScope);
   const careSync = useCareSync(firebaseConnection);
   const { entries, message: saveMessage } = careSync;
   const [legacyCache, setLegacyCache] = useState(false);
@@ -231,7 +228,6 @@ export default function HomePage() {
   const risk = useMemo(() => meltdownEstimate(entries, entry), [entries, entry]);
   const currentRole = firebaseConnection?.profile.role;
   const isMaster = currentRole === 'master';
-  const isReadOnly = currentRole === 'viewer';
   const selectedFamily = firebaseConnection?.families.find(item => item.familyId === firebaseConnection.profile.familyId);
   useEffect(() => {
     if (!firebaseConnection || !firebaseConnection.families.some(family => family.role === 'Primary')) {
@@ -449,7 +445,6 @@ export default function HomePage() {
   async function handleSignOut() {
     const connection = connectionRef.current;
     careSync.stop();
-    trackerDrafts.clear();
     connectionRef.current = null;
     setFirebaseConnection(null);
     setFamilyMessage('');
@@ -613,7 +608,12 @@ export default function HomePage() {
         </TabsList>
 
         <TabsContent value="today" className="mt-5">
-          <TodayTracker key={trackerScope} patientName={firebaseConnection?.patient?.name ?? 'Patient'} date={selectedDate} onDateChange={setSelectedDate} data={trackerDrafts.data} onChange={trackerDrafts.update} readOnly={isReadOnly} />
+          <section className="mx-auto max-w-3xl rounded-2xl border bg-card p-6 shadow-sm">
+            <p className="text-sm font-semibold text-primary">Today's check-in</p>
+            <h1 className="mt-2 text-2xl font-bold">{firebaseConnection?.patient?.name ?? 'Patient'}</h1>
+            <p className="mt-3 text-muted-foreground">Your family and patient setup is saved. Daily tracking is not available in this build yet.</p>
+            <Button className="mt-5" variant="outline" onClick={() => setActiveTab('settings')}>View family and patient details</Button>
+          </section>
         </TabsContent>
 
         <TabsContent value="insights" className="mt-5">
@@ -669,18 +669,11 @@ export default function HomePage() {
 
           <div className="settings-grid mt-5">
             <Card>
-              <CardHeader><CardTitle className="text-xl font-bold">New tracker preview</CardTitle></CardHeader>
-              <CardContent className="space-y-3">
-                <p className="text-sm text-muted-foreground">Try the proposed check-in with three editable examples and unexpected events. It uses sample data and resets when you refresh.</p>
-                <a href="/tracker-preview/" className="inline-flex min-h-11 items-center rounded-xl border px-4 text-sm font-semibold text-primary hover:bg-muted">Open tracker preview</a>
-              </CardContent>
-            </Card>
-            <Card>
               <CardHeader><CardTitle className="text-xl font-bold">Your account</CardTitle></CardHeader>
               <CardContent>
                 <div className="current-access-card">
                   <span><ShieldCheck /></span>
-                  <div><b>{firebaseConnection?.user.displayName || caregiverEmail || 'MayMay account'}</b><p>{caregiverEmail}</p></div>
+                  <div><b>{firebaseConnection?.accountName || firebaseConnection?.user.displayName || caregiverEmail || 'MayMay account'}</b><p>{caregiverEmail}</p></div>
                   <strong>{currentRole === 'master' ? 'Primary' : currentRole === 'caregiver' ? 'Caregiver' : 'Viewer'}</strong>
                 </div>
               </CardContent>

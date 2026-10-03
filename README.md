@@ -2,7 +2,7 @@
 
 MayMay is a private caregiver-facing tracker for morning, afternoon, and evening mood, routines, meals, sleep, medications, bathroom notes, triggers, and meltdown events.
 
-> **Development status:** Stages B and C are on `DevBranch`. The tracker redesign is available only as a mock-data UI preview. The host provisioning script and live database cutover are still pending. Do not run this branch's host against the live Firebase project: host startup publishes `firebase.rules`. Production remains on `main` until the staged rollout is approved.
+> **Development status:** Release-plan Stages 1–2 define the final data model and connect account, family, and patient setup. See [the data model](docs/data-model.md). Setup requires explicit release activation through `system/data`; it never initializes the live database automatically. The demo route has been removed, and Today will accept care records once its real persistence is connected in Stage 4. Do not run this branch's host against the live Firebase project: host startup still publishes rules and must be updated before release. Production remains on `main` until rollout is approved.
 
 The application has two surfaces:
 
@@ -58,7 +58,7 @@ For an older installed copy that predates the host update command, email `MayMay
 
 ## Stage B account and family setup
 
-A new account can be created with email/password or Google sign-in. The account then creates a family and becomes its first Primary caregiver. The Primary adds a patient; only the name is required. Birthdate, age, sex, ethnicity, and autism support level can be supplied during creation or edited later. An account can create multiple families and patients and switch between them. Care events remain scoped to the selected family and patient.
+A new account can be created with email/password or Google sign-in. The account then creates a family and becomes its first Active Primary caregiver. The Primary adds a patient; only the name is required. Birthdate, sex, ethnicity, autism support level, and communication/support needs can be supplied during creation, edited, or cleared later. Age is calculated from birthdate. Families and patient relationship records save atomically with their membership indexes. An account can create multiple families and patients and switch between them.
 
 ## Stage C family access
 
@@ -66,9 +66,9 @@ A Primary caregiver can generate a Family Code and rotate it to stop new request
 
 The host terminal's older role commands and provisioning script still belong to the production v1 flow and must be updated before a release. This stage does not deploy the new rules or app to the live host.
 
-## Tracker UI preview
+## Tracker interface
 
-Open **Settings → New tracker preview**, or visit `/tracker-preview/` while running the development server. This isolated prototype starts with Morning Mood, Bowel Movements, and Went to School on Time as editable, removable examples. The tracker menu contains creation and deletion; unexpected events can be added and removed directly, with Undo. It uses in-memory sample data only: no Firebase connection, care-record write, or browser-storage persistence. Refreshing the page resets the preview. The existing daily tracker remains the real care-record interface until its data model is redesigned and tested.
+The reusable tracker interface is in `app/today-tracker.tsx`. It will be connected directly to Trackers and Observations in Stage 4. There is no user-facing demo route or temporary care saving. Starter trackers will be created as real records during patient setup when that stage is implemented.
 
 ## Firebase requirements
 

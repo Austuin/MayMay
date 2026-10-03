@@ -33,7 +33,7 @@ function membershipRef(connection: FirebaseConnection, familyId: string, userId:
 }
 
 function accessRef(connection: FirebaseConnection, familyId: string, patientId: string, userId: string) {
-  return doc(connection.db, 'families', familyId, 'children', patientId, 'access', userId);
+  return doc(connection.db, 'families', familyId, 'patients', patientId, 'relationships', userId);
 }
 
 function codeFor(familyId: string, secret: string) {
