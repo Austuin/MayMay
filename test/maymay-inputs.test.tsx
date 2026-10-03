@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => {
   return { makeConnection, connection: makeConnection(), save: vi.fn() };
 });
 vi.mock('@/lib/maymay-firebase', () => ({
+  watchFirebaseAccess: () => () => undefined,
   loadRuntimeConfig: async () => ({ firebase: { projectId: 'demo-test' } }),
   restoreFirebase: async () => mocks.connection,
   connectFirebase: async () => mocks.connection,

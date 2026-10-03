@@ -1,10 +1,10 @@
 import { deleteApp, getApps, initializeApp, type FirebaseApp } from 'firebase/app';
 import {
   browserLocalPersistence, createUserWithEmailAndPassword, getAuth, GoogleAuthProvider,
-  sendPasswordResetEmail, setPersistence, signInWithEmailAndPassword, signInWithPopup, signOut, updateProfile, type User,
+  onAuthStateChanged, sendPasswordResetEmail, setPersistence, signInWithEmailAndPassword, signInWithPopup, signOut, updateProfile, type User,
 } from 'firebase/auth';
 import {
-  arrayUnion, collection, deleteField, doc, getDoc, getFirestore, serverTimestamp,
+  arrayUnion, collection, deleteField, doc, getDocFromServer as getDoc, getFirestore, onSnapshot, serverTimestamp,
   runTransaction, writeBatch, type Firestore,
 } from 'firebase/firestore';
 import type { FirebaseWebConfig } from './maymay-types';
@@ -344,4 +344,31 @@ export async function connectFirebaseWithGoogle(config: FirebaseWebConfig): Prom
 
 export async function disconnectFirebase(connection: FirebaseConnection) {
   await signOut(getAuth(connection.app));
+}
+
+/** Drop the entire visible session when its authority changes, including other tabs. */
+export function watchFirebaseAccess(connection: FirebaseConnection, invalidated: (message: string) => void) {
+  let closed = false;
+  const fail = () => {
+    if (closed) return;
+    closed = true;
+    invalidated('Your access or sign-in changed. Sign in again to refresh your access.');
+  };
+  const stops = [onAuthStateChanged(getAuth(connection.app), user => {
+    if (!user || user.uid !== connection.user.uid) fail();
+  })];
+  const watch = (path: string, valid: (data: Record<string, unknown> | undefined) => boolean) => {
+    stops.push(onSnapshot(doc(connection.db, path), { includeMetadataChanges: true }, snapshot => {
+      if (!snapshot.metadata.fromCache && !snapshot.metadata.hasPendingWrites && !valid(snapshot.data())) fail();
+    }, error => { if (error.code === 'permission-denied') fail(); }));
+  };
+  watch('system/data', data => data?.schemaVersion === 1 && data.generation === connection.dataGeneration);
+  if (connection.profile.familyId) {
+    const family = connection.families.find(item => item.familyId === connection.profile.familyId);
+    watch(`families/${connection.profile.familyId}/memberships/${connection.user.uid}`,
+      data => data?.status === 'Active' && data.role === family?.role);
+    if (connection.patientId) watch(`families/${connection.profile.familyId}/patients/${connection.patientId}/relationships/${connection.user.uid}`,
+      data => data?.canAccess === true);
+  }
+  return () => { closed = true; stops.forEach(stop => stop()); };
 }

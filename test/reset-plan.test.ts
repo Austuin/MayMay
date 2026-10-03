@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { inventoryResetScope, resetPlanHash, runControlledReset, validateBackupUri } from '../scripts/reset-plan.mjs';
+import { inventoryResetScope, resetPlanHash, runControlledReset, validateBackupUri, waitForRulesRelease } from '../scripts/reset-plan.mjs';
 
 function fakeFirestore() {
   const documents = new Set([
@@ -26,6 +26,15 @@ function fakeFirestore() {
 }
 
 describe('controlled reset plan', () => {
+  it('waits for the exact published rules release and propagation, stopping on inspection failure', async () => {
+    const sleep = vi.fn(async (_ms: number) => undefined);
+    const readRelease = vi.fn().mockResolvedValueOnce({ rulesetName: 'old' }).mockResolvedValue({ rulesetName: 'new' });
+    await waitForRulesRelease({ readRelease, rulesetName: 'new', sleep });
+    expect(sleep.mock.calls.map(call => call[0])).toEqual([2000, 60000]);
+    sleep.mockClear();
+    await expect(waitForRulesRelease({ readRelease: async () => { throw new Error('Denied'); }, rulesetName: 'new', sleep })).rejects.toThrow('Denied');
+    expect(sleep).not.toHaveBeenCalled();
+  });
   const projectId = 'demo-maymay-test';
 
   it('inventories exact approved paths, including descendants under a missing parent, without mutating data', async () => {
@@ -55,7 +64,7 @@ describe('controlled reset plan', () => {
       confirmPlan: planHash, backupUri: 'gs://bucket/MayMay/export', operations: {} })).rejects.toThrow(/reviewed dry run/);
   });
 
-  it('completes backup before maintenance and activation, preserving Admin records', async () => {
+  it('freezes writes before backup and activation, preserving Admin records', async () => {
     const { db, documents, actions } = fakeFirestore();
     const inventory = await inventoryResetScope(db);
     const planHash = resetPlanHash(projectId, inventory);
@@ -66,7 +75,7 @@ describe('controlled reset plan', () => {
         maintenanceRules: async () => { actions.push('maintenance'); },
         finalRules: async () => { actions.push('final-rules'); },
       } });
-    expect(actions.slice(0, 3)).toEqual(['backup', 'maintenance', 'delete:system/data']);
+    expect(actions.slice(0, 3)).toEqual(['maintenance', 'backup', 'delete:system/data']);
     expect(actions.at(-2)).toBe('final-rules');
     expect(actions.at(-1)).toBe('set:system/data');
     expect(documents.has('admins/admin-a')).toBe(true);
@@ -92,7 +101,7 @@ describe('controlled reset plan', () => {
     }
   });
 
-  it('stops before maintenance if the approved paths change during backup', async () => {
+  it('stops without deleting if the approved paths change during backup', async () => {
     const { db, documents, actions } = fakeFirestore();
     const planHash = resetPlanHash(projectId, await inventoryResetScope(db));
     await expect(runControlledReset({ projectId, db, execute: true, confirmProject: projectId,
@@ -101,7 +110,7 @@ describe('controlled reset plan', () => {
         maintenanceRules: async () => { actions.push('maintenance'); },
         finalRules: async () => { actions.push('final-rules'); },
       } })).rejects.toThrow(/changed during backup/);
-    expect(actions).toEqual(['backup']);
+    expect(actions).toEqual(['maintenance', 'backup']);
     expect(documents.has('system/data')).toBe(true);
   });
 });

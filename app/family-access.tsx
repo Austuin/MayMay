@@ -74,7 +74,7 @@ function MemberRow({ connection, family, member, onAction }: {
     {!self && member.status === 'Active' && <>
       <label className="block text-sm font-medium">Role
         <select className="ml-2 h-9 rounded-md border bg-background px-2" value={member.role} disabled={designated} onChange={event =>
-          void onAction(() => setFamilyMemberRole(connection, family.familyId, member.userId, event.target.value as FamilyRole), 'Role updated.')
+          void onAction(() => setFamilyMemberRole(connection, family.familyId, member, event.target.value as FamilyRole), 'Role updated.')
         }>
           <option value="Primary">Primary</option><option value="Caregiver">Caregiver</option><option value="Viewer">Viewer</option>
         </select>

@@ -133,6 +133,7 @@ export function TodayTracker({ patientName, date, onDateChange, data, onChange, 
     Object.prototype.hasOwnProperty.call(todayAnswers, item.id),
   ).length;
   const dayEvents = spontaneous.filter((item) => item.date === date);
+  const reusableEvents = [...new Map([...previousEvents, ...spontaneous].map(item => [spontaneousRepeatKey(item.kind, item.title), item])).values()];
   const repeated = [
     ...new Map(
       spontaneous.filter(item => item.date === date).map((item) => [
@@ -586,10 +587,10 @@ export function TodayTracker({ patientName, date, onDateChange, data, onChange, 
                   </div>}
                 </div>
               ))}
-              {!readOnly && (previousEvents.length > 0 || hasMorePreviousEvents) && <details className="border-t pt-3 text-sm">
+              {!readOnly && (reusableEvents.length > 0 || hasMorePreviousEvents) && <details className="border-t pt-3 text-sm">
                 <summary className="cursor-pointer font-medium">Log another occurrence</summary>
                 <p className="mt-1 text-muted-foreground">Choose a previous event. Notes and meltdown details start empty.</p>
-                <div className="mt-3 flex flex-wrap gap-2">{previousEvents.map(item =>
+                <div className="mt-3 flex flex-wrap gap-2">{reusableEvents.map(item =>
                   <button key={spontaneousRepeatKey(item.kind, item.title)} className="min-h-11 rounded-xl border px-3 text-left hover:bg-muted"
                     onClick={() => openUnexpected(item)}>{item.title} <span className="text-muted-foreground">· {item.kind}</span></button>)}</div>
                 {hasMorePreviousEvents && <button className="mt-3 min-h-11 font-semibold text-primary underline" onClick={onLoadMoreEvents}>Load more previous events</button>}
