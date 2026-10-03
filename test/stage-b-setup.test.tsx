@@ -5,6 +5,7 @@ import HomePage from '@/app/page';
 const mocks = vi.hoisted(() => {
   const base = {
     app: { options: { projectId: 'demo-test' } }, db: {},
+    accountName: 'Setup User',
     user: { uid: 'setup-user', email: 'setup@example.test', displayName: 'Setup User' },
   };
   const empty = {
@@ -22,7 +23,7 @@ const mocks = vi.hoisted(() => {
   };
   return {
     empty, family, ready,
-    restoreFirebase: vi.fn(async (): Promise<typeof empty | null> => empty),
+    restoreFirebase: vi.fn(async (): Promise<unknown> => empty),
     registerFirebaseAccount: vi.fn(async () => empty),
     resetFirebasePassword: vi.fn(async (_config: unknown, _email: string) => undefined),
     connectFirebase: vi.fn(async () => ready),
@@ -33,6 +34,10 @@ const mocks = vi.hoisted(() => {
       ...ready, patient: { ...patient, ...fields },
       families: [{ ...ready.families[0], patients: [{ ...patient, ...fields }] }],
     })),
+    updateAccountName: vi.fn(async (_connection: unknown, name: string) => ({ ...ready, accountName: name })),
+    updateFamilyName: vi.fn(async (_connection: unknown, _familyId: string, name: string) => ({
+      ...ready, families: [{ ...ready.families[0], name }],
+    })),
   };
 });
 
@@ -42,6 +47,8 @@ vi.mock('@/lib/maymay-firebase', () => ({
   createFamily: mocks.createFamily,
   createPatient: mocks.createPatient,
   updatePatient: mocks.updatePatient,
+  updateAccountName: mocks.updateAccountName,
+  updateFamilyName: mocks.updateFamilyName,
   refreshFirebaseConnection: vi.fn(async (connection: unknown) => connection),
   selectFamilyPatient: vi.fn(),
   connectFirebase: mocks.connectFirebase,
@@ -80,10 +87,39 @@ beforeEach(() => {
   mocks.createFamily.mockClear();
   mocks.createPatient.mockClear();
   mocks.updatePatient.mockClear();
+  mocks.updateAccountName.mockClear();
+  mocks.updateFamilyName.mockClear();
 });
 afterEach(() => { cleanup(); localStorage.clear(); });
 
 describe('Stage B setup', () => {
+  it('edits account and family names through Settings and keeps reset and sign-out available', async () => {
+    mocks.restoreFirebase.mockResolvedValueOnce(mocks.ready);
+    render(<HomePage />);
+    await screen.findByText('Daily check-in');
+    fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
+    fireEvent.change(screen.getByLabelText('Your name'), { target: { value: 'New name' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save name' }));
+    await waitFor(() => expect(mocks.updateAccountName).toHaveBeenCalledWith(mocks.ready, 'New name'));
+    fireEvent.change(screen.getByLabelText('Family name'), { target: { value: 'New family name' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save family name' }));
+    await waitFor(() => expect(mocks.updateFamilyName).toHaveBeenCalledWith(expect.any(Object), 'family-a', 'New family name'));
+    expect(screen.getByRole('button', { name: 'Reset password' })).toBeTruthy();
+    expect(screen.getAllByRole('button', { name: 'Sign out' }).length).toBeGreaterThan(0);
+  });
+
+  it('shows permitted patient details read-only to a Viewer', async () => {
+    mocks.restoreFirebase.mockResolvedValueOnce({ ...mocks.ready,
+      profile: { ...mocks.ready.profile, role: 'viewer' },
+      families: [{ ...mocks.ready.families[0], role: 'Viewer' }],
+    } as typeof mocks.ready);
+    render(<HomePage />);
+    await screen.findByText('Daily check-in');
+    fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
+    expect(screen.getByText('Allow extra response time')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Save patient details' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Save family name' })).toBeNull();
+  });
   it('takes a newly registered account into family setup', async () => {
     mocks.restoreFirebase.mockResolvedValueOnce(null);
     render(<HomePage />);

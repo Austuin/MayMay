@@ -84,6 +84,8 @@ service cloud.firestore {
       allow update: if signedIn() && request.auth.uid == userId
         && resource.data.dataGeneration == currentGeneration()
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'dateUpdated', 'familyIds'])
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 100
         && request.resource.data.get('familyIds', []) is list;
       allow delete: if false;
       match /days/{dayId} { allow read, write: if false; }
@@ -104,6 +106,8 @@ service cloud.firestore {
       // another active Primary in the post-commit state.
       allow update: if primary(familyId)
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'primaryId'])
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 100
         && activePrimaryAfter(familyId, request.resource.data.primaryId);
       allow delete: if false;
       match /memberships/{userId} {
