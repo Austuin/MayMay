@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import HomePage from '@/app/page';
+import { ActivationPendingError } from '@/lib/maymay-database';
 
 const mocks = vi.hoisted(() => {
   const base = {
@@ -86,6 +87,12 @@ beforeEach(() => {
 afterEach(() => { cleanup(); localStorage.clear(); });
 
 describe('Stage B setup', () => {
+  it('shows a setup and maintenance state when activation is missing', async () => {
+    mocks.restoreFirebase.mockRejectedValueOnce(new ActivationPendingError());
+    render(<HomePage />);
+    expect(await screen.findByRole('heading', { name: 'MayMay setup or maintenance' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Create account' })).toBeNull();
+  });
   it('edits account and family names through Settings and keeps reset and sign-out available', async () => {
     mocks.restoreFirebase.mockResolvedValueOnce(mocks.ready);
     render(<HomePage />);
