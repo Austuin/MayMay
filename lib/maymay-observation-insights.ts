@@ -1,4 +1,4 @@
-import type { MoodAnswer, ObservationRecord, TrackerKind } from './maymay-schema';
+import { isCounterKind, type MoodAnswer, type ObservationRecord, type TrackerKind } from './maymay-schema';
 
 const moodScores: Record<string, number> = { Bad: 1, Poor: 2, Neutral: 3, OK: 4, Good: 5 };
 const emptyMoods = (): Record<MoodAnswer, number> => ({ Bad: 0, Poor: 0, Neutral: 0, OK: 0, Good: 0 });
@@ -24,10 +24,10 @@ export function summarizeObservations(records: ObservationRecord[]) {
       insight.total += moodScores[item.value] ?? 0;
       if (item.value in insight.moods) insight.moods[item.value as MoodAnswer]++;
     }
-    if (snapshot.kind === 'count' && typeof item.value === 'number') insight.total += item.value;
+    if (isCounterKind(snapshot.kind) && typeof item.value === 'number') insight.total += item.value;
     if (item.value === true) insight.yes++;
     if (item.value === false) insight.no++;
-    insight.average = ['mood', 'count'].includes(snapshot.kind) ? insight.total / insight.recorded : null;
+    insight.average = snapshot.kind === 'mood' || isCounterKind(snapshot.kind) ? insight.total / insight.recorded : null;
     trackers.set(item.trackerId, insight);
   }
   return { recordedDays: days.length, firstDate: days.at(-1) ?? null, lastDate: days[0] ?? null,

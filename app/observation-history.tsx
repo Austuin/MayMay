@@ -3,7 +3,7 @@
 import { ArrowRight, BarChart3, History, Info, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import type { ObservationRecord } from '@/lib/maymay-schema';
+import { isCounterKind, type ObservationRecord } from '@/lib/maymay-schema';
 import { observationDaySummary, summarizeObservations } from '@/lib/maymay-observation-insights';
 
 type HistoryProps = {
@@ -60,7 +60,7 @@ export function ObservationInsights({ observations, loading, error, rangeStart, 
       {summary.trackers.length > 0 && <Card><CardHeader><CardTitle className="text-xl font-bold">Recurring events</CardTitle><p className="text-muted-foreground">Each tracker is counted separately. Unanswered days are excluded.</p></CardHeader>
         <CardContent className="grid gap-3 sm:grid-cols-2">{summary.trackers.map(item => <div key={item.id} className="rounded-xl border p-4">
           <b>{item.title}</b><p className="text-sm text-muted-foreground">{item.recorded} recorded {item.recorded === 1 ? 'day' : 'days'}</p>
-          <p className="mt-2 text-sm">{item.kind === 'mood' ? `Average mood ${item.average?.toFixed(1)}/5` : item.kind === 'count'
+          <p className="mt-2 text-sm">{item.kind === 'mood' ? `Average mood ${item.average?.toFixed(1)}/5` : isCounterKind(item.kind)
             ? `Total ${item.total} · ${item.average?.toFixed(1)} per recorded day`
             : `${item.yes} Yes · ${item.no} No`}</p>
           {item.kind === 'mood' && <p className="mt-1 text-xs text-muted-foreground">{Object.entries(item.moods).map(([mood, count]) => `${mood} ${count}`).join(' · ')}</p>}

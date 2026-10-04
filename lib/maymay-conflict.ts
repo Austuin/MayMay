@@ -4,7 +4,7 @@ export function describeCareVersion(value: unknown): string {
   const record = value as Record<string, unknown>;
   if (record.deletedAt) return 'Removed';
   const lines = [String(record.title || 'Entry')];
-  const kinds: Record<string, string> = { mood: 'Mood check', good: 'Good event', difficult: 'Difficult event', meltdown: 'Meltdown', other: 'Other event', checkin: 'Check-in', count: 'Counter' };
+  const kinds: Record<string, string> = { mood: 'Mood check', good: 'Good event', difficult: 'Difficult event', meltdown: 'Meltdown', other: 'Other event', checkin: 'Check-in', count: 'Counter', good_count: 'Good counter', difficult_count: 'Difficult counter' };
   if (typeof record.kind === 'string' && kinds[record.kind]) lines.push(kinds[record.kind]);
   if (typeof record.description === 'string') lines.push(record.description);
   if (Array.isArray(record.days)) lines.push(record.days.map(day => ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][Number(day)]).join(', '));
