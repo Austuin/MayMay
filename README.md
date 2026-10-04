@@ -6,7 +6,7 @@ MayMay is a private, patient-scoped care tracker. Caregivers can answer recurrin
 
 ## Host and browser
 
-The host serves the caregiver website and the `/api/family-invitations/*` endpoint. It reads the existing Firebase Web app configuration and activation state; ordinary startup does not provision records, publish rules, or reset data. It keeps the Firebase Admin JSON on the host and serves only the public Firebase Web configuration to browsers.
+The host serves the caregiver website. Family Codes and join requests run directly between the website and Firebase, including on a static-only host. The Windows host retains `/api/family-invitations/*` for older clients. It reads the existing Firebase Web app configuration and activation state; ordinary startup does not provision records, publish rules, or reset data. It keeps the Firebase Admin JSON on the host and serves only the public Firebase Web configuration to browsers.
 
 Start an installed copy with `Start-MayMay.cmd`, or start from a source checkout with:
 
@@ -46,7 +46,9 @@ Each care change is revision checked in a Firestore transaction and has a durabl
 
 Accounts use Firebase Authentication with email/password or Google sign-in. The first caregiver creates a family and becomes its Primary. They add a patient; only Name is required. Optional birthdate, sex, ethnicity, autism support level, and communication/support needs can be added, edited, or cleared. Age is calculated rather than stored.
 
-A Primary creates a seven-day Family Code with selected patient scope. A verified-email caregiver requests access, then waits for Primary approval. The host invitation API verifies identity, current generation, membership, and patient scope. Pending, Rejected, and Disabled users have no care access. Codes are hashed in Firestore; browsers cannot write invitation or pending-approval records directly.
+A Primary creates a seven-day Family Code with selected patient scope in the website. A verified-email caregiver requests access, then waits for Primary approval. Firestore rules verify identity, current generation, code proof, membership, and patient access. Pending, Rejected, and Disabled users have no care access. Codes use cryptographic randomness and are hashed in Firestore; only Primaries can read invitation records. Generation, rotation, joining, approval, rejection, and cancellation require no host API or Admin key in the browser. The existing local HTTP website is supported.
+
+To roll out browser invitations, publish the matching `firebase.rules` and update the website files through the host's existing MayMay site updater. No database reset, reformat, migration, or host-program update is required. Existing codes and pending requests remain compatible.
 
 ## Updates and testing
 
