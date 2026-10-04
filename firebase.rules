@@ -185,7 +185,7 @@ service cloud.firestore {
               && validAudit() && request.resource.data.trackerId == trackerId
               && request.resource.data.title is string && request.resource.data.title.size() > 0 && request.resource.data.title.size() <= 100
               && request.resource.data.description is string && request.resource.data.description.size() > 0 && request.resource.data.description.size() <= 240
-              && request.resource.data.kind in ['mood', 'good', 'difficult', 'checkin', 'count']
+              && request.resource.data.kind in ['mood', 'good', 'difficult', 'checkin', 'count', 'good_count', 'difficult_count']
               && request.resource.data.days is list && request.resource.data.days.size() > 0
               && request.resource.data.days.hasOnly([0, 1, 2, 3, 4, 5, 6])
               && request.resource.data.days.toSet().size() == request.resource.data.days.size();
@@ -221,7 +221,7 @@ service cloud.firestore {
               && d.trackerSnapshot.keys().hasOnly(['title', 'description', 'kind'])
               && d.trackerSnapshot.title is string && d.trackerSnapshot.description is string
               && ((d.trackerSnapshot.kind == 'mood' && d.value in ['Bad', 'Poor', 'Neutral', 'OK', 'Good'])
-                || (d.trackerSnapshot.kind == 'count' && d.value is int && d.value >= 0)
+                || (d.trackerSnapshot.kind in ['count', 'good_count', 'difficult_count'] && d.value is int && d.value >= 0)
                 || (d.trackerSnapshot.kind in ['good', 'difficult', 'checkin'] && d.value is bool));
           }
           function validObservation() {

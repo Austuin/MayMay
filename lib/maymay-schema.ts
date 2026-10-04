@@ -49,7 +49,10 @@ export type FamilyInvitation = {
   revokedAt: unknown | null; createdBy: string; dateCreated: unknown; patientIds: string[];
   dataGeneration: string;
 };
-export type TrackerKind = 'mood' | 'good' | 'difficult' | 'checkin' | 'count';
+export type TrackerKind = 'mood' | 'good' | 'difficult' | 'checkin' | 'count' | 'good_count' | 'difficult_count';
+export function isCounterKind(kind: TrackerKind) {
+  return kind === 'count' || kind === 'good_count' || kind === 'difficult_count';
+}
 export type MoodAnswer = 'Bad' | 'Poor' | 'Neutral' | 'OK' | 'Good';
 export type TrackerAnswer = MoodAnswer | boolean | number;
 export type RecordAudit = {
@@ -67,7 +70,7 @@ export function trackerValues(input: TrackerDefinition): TrackerDefinition {
   const description = input.description.trim();
   if (!title || title.length > 100) throw new Error('Enter a title of up to 100 characters.');
   if (!description || description.length > 240) throw new Error('Enter a description of up to 240 characters.');
-  if (!['mood', 'good', 'difficult', 'checkin', 'count'].includes(input.kind)) throw new Error('Choose a listed event type.');
+  if (!['mood', 'good', 'difficult', 'checkin', 'count', 'good_count', 'difficult_count'].includes(input.kind)) throw new Error('Choose a listed event type.');
   const days = [...new Set(input.days)].sort((a, b) => a - b);
   if (!days.length || days.some(day => !Number.isInteger(day) || day < 0 || day > 6)) throw new Error('Choose at least one weekday.');
   return { title, description, kind: input.kind, days };

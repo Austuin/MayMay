@@ -12,7 +12,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { createEventId, historyCutoffDate, localDateValue } from '@/lib/maymay-types';
-import { spontaneousRepeatKey, trackerValues, type MeltdownDetails, type TrackerAnswer, type TrackerDefinition, type TrackerKind } from '@/lib/maymay-schema';
+import { isCounterKind, spontaneousRepeatKey, trackerValues, type MeltdownDetails, type TrackerAnswer, type TrackerDefinition, type TrackerKind } from '@/lib/maymay-schema';
 
 type Answer = TrackerAnswer;
 type Tracker = TrackerDefinition & {
@@ -39,6 +39,8 @@ const kinds: { value: TrackerKind; label: string; hint: string }[] = [
   { value: 'difficult', label: 'Difficult event', hint: 'Yes or No' },
   { value: 'checkin', label: 'Check-in', hint: 'Yes or No' },
   { value: 'count', label: 'Counter', hint: 'A number' },
+  { value: 'good_count', label: 'Good counter', hint: 'A number of positive moments' },
+  { value: 'difficult_count', label: 'Difficult counter', hint: 'A number of difficult moments' },
 ];
 const blankDraft = (): TrackerDraft => ({
   kind: 'checkin',
@@ -367,7 +369,7 @@ export function TodayTracker({ patientName, date, onDateChange, data, onChange, 
                           ),
                         )}
                       </select>
-                    ) : item.kind === 'count' ? (
+                    ) : isCounterKind(item.kind) ? (
                       <div className="flex flex-wrap items-center gap-2">
                         <button
                           aria-label={`Decrease ${item.title}`}

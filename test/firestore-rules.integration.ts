@@ -426,6 +426,30 @@ describe('tracker and observation saves with real Firestore rules', () => {
       value, title: 'School on time', note: '', details: {} },
   });
 
+  it.each(['good_count', 'difficult_count'] as const)('saves nonnegative %s answers and rejects negative counts', async (kind) => {
+    const recordId = `${kind}-tracker`;
+    const title = kind === 'good_count' ? 'Hugs' : 'Crying';
+    await commitCareMutation(connection('alice'), {
+      id: `create-${kind}`, target: 'tracker', recordId, expectedRevision: null,
+      predecessor: null, queuedAt: 1,
+      after: { title, description: `How many times?`, kind, days: [0, 1, 2, 3, 4, 5, 6] },
+    });
+    const observationId = `${recordId}_${day}`;
+    const draft: ObservationDraft = { localDate: day, occurredAt: `${day}T12:00:00Z`, kind: 'answer',
+      trackerId: recordId, trackerSnapshot: { title, description: 'How many times?', kind },
+      value: 0, title, note: '', details: {} };
+    await commitCareMutation(connection('alice'), {
+      id: `answer-${kind}`, target: 'observation', recordId: observationId,
+      expectedRevision: null, predecessor: null, queuedAt: 2, after: draft,
+    });
+    expect((await getDoc(doc(connection('alice').db,
+      `families/maymay/patients/maymay/observations/${observationId}`))).data()?.value).toBe(0);
+    await assertFails(commitCareMutation(connection('alice'), {
+      id: `negative-${kind}`, target: 'observation', recordId: observationId,
+      expectedRevision: 1, predecessor: null, queuedAt: 3, after: { ...draft, value: -1 },
+    }));
+  });
+
   it('shares No and Yes across caregivers while protecting revisions, snapshots, and Viewer access', async () => {
     await commitCareMutation(connection('alice'), tracker);
     const trackerPath = 'families/maymay/patients/maymay/trackers/school';

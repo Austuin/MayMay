@@ -71,6 +71,32 @@ describe('tracker UI preview with isolated mock data', () => {
     expect(screen.getByText('2 of 3 answered')).toBeTruthy();
   });
 
+  it.each([
+    ['Good counter', 'Hugs', 'How many hugs today?'],
+    ['Difficult counter', 'Crying', 'How many times did they cry today?'],
+  ])('creates and records a %s, then clears its answer', (kind, title, description) => {
+    render(<TrackerPreview />);
+    fireEvent.change(screen.getByLabelText('Entry date'), { target: { value: '2026-10-01' } });
+    openManage();
+    fireEvent.click(screen.getByRole('button', { name: 'Add event' }));
+    fireEvent.click(screen.getByRole('radio', { name: kind }));
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: title } });
+    fireEvent.change(screen.getByLabelText('Description'), { target: { value: description } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save event' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Back to check-in' }));
+    expect(screen.getByText('0 of 4 answered')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText(`${title} count`), { target: { value: '3' } });
+    expect((screen.getByLabelText(`${title} count`) as HTMLInputElement).value).toBe('3');
+    fireEvent.change(screen.getByLabelText('Entry date'), { target: { value: '2026-10-02' } });
+    expect((screen.getByLabelText(`${title} count`) as HTMLInputElement).value).toBe('');
+    fireEvent.change(screen.getByLabelText('Entry date'), { target: { value: '2026-10-01' } });
+    expect((screen.getByLabelText(`${title} count`) as HTMLInputElement).value).toBe('3');
+    const card = screen.getByText(title, { selector: 'h3' }).closest('article')!;
+    fireEvent.click(within(card).getByRole('button', { name: 'Clear answer' }));
+    expect((screen.getByLabelText(`${title} count`) as HTMLInputElement).value).toBe('');
+    expect(screen.getByText('0 of 4 answered')).toBeTruthy();
+  });
+
   it('creates, edits, and deletes a tracker through management, with confirmation', () => {
     render(<TrackerPreview />);
     fireEvent.change(screen.getByLabelText('Entry date'), { target: { value: '2026-10-01' } });
