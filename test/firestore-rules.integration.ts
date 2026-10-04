@@ -55,7 +55,7 @@ beforeEach(async () => {
       ['pending', 'maymay', 'Caregiver', 'Pending'],
       ['owner', 'maymay', 'Primary', 'Active'], ['other-owner', 'other-family', 'Primary', 'Active'],
     ] as const) {
-      await setDoc(doc(context.firestore(), 'families', familyId, 'memberships', uid), { familyId, userId: uid, role, status });
+      await setDoc(doc(context.firestore(), 'families', familyId, 'memberships', uid), { familyId, userId: uid, role, status, patientIds: status === 'Active' ? ['maymay'] : [] });
     }
     await setDoc(doc(context.firestore(), 'families/maymay'), { familyId: 'maymay', name: 'MayMay', creatorId: 'owner', primaryId: 'owner', dataGeneration: 'test-generation' });
     await setDoc(doc(context.firestore(), 'families/other-family'), { familyId: 'other-family', name: 'Other', creatorId: 'other-owner', primaryId: 'other-owner', dataGeneration: 'test-generation' });
@@ -247,6 +247,8 @@ describe('Family Code requests and Primary approval', () => {
     }, { writeHead: (value: number) => { status = value; }, end: () => undefined });
     expect(status).toBe(200);
     expect((await adminDb.doc('families/maymay/memberships/unicode').get()).data()?.relationship).toBe('Tía 💙');
+    await approveFamilyRequest(ownerConnection(), 'maymay', joining.user.uid, 'Viewer', ['maymay']);
+    await assertSucceeds(getDoc(doc(joining.db, 'families/maymay/patients/maymay')));
   });
   function ownerConnection() {
     return {
@@ -262,13 +264,13 @@ describe('Family Code requests and Primary approval', () => {
 
   async function applicant(uid: string) {
     const email = `${uid}@example.test`;
-    const firestore = env.authenticatedContext(uid, { email }).firestore();
+    const firestore = env.authenticatedContext(uid, { email, email_verified: uid !== 'unverified' }).firestore();
     await assertSucceeds(setDoc(doc(firestore, 'users', uid), {
       userId: uid, name: uid, email, familyIds: [], dataGeneration: 'test-generation',
     }));
     return {
       app: { options: { projectId: 'demo-maymay-test' } }, db: firestore,
-      user: { uid, email, displayName: uid, getIdToken: async () => uid },
+      user: { uid, email, displayName: uid, emailVerified: uid !== 'unverified', getIdToken: async () => uid },
       dataGeneration: 'test-generation', accountName: 'Test user', profile: { familyId: '', role: 'pending', active: false },
       patientId: '', families: [], requests: [],
     } as unknown as FirebaseConnection;
@@ -281,13 +283,17 @@ describe('Family Code requests and Primary approval', () => {
     expect(await getFamilyInvitation(owner, 'maymay')).toMatchObject({ inviteId, patientIds: ['maymay'] });
     const invitation = (await adminDb.doc('families/maymay/invitations/' + inviteId).get()).data();
     expect(JSON.stringify(invitation)).not.toContain(code.split('.').at(-1));
-    await assertFails(getDoc(doc(owner.db, 'families/maymay/invitations/' + inviteId)));
+    await assertSucceeds(getDoc(doc(owner.db, 'families/maymay/invitations/' + inviteId)));
+    await assertFails(getDoc(doc(joining.db, 'families/maymay/invitations/' + inviteId)));
+    await assertFails(getDoc(doc(connection('alice').db, 'families/maymay/invitations/' + inviteId)));
+    await assertFails(getDocs(collection(owner.db, 'families/maymay/invitations')));
     await assertFails(getDoc(doc(joining.db, 'families/maymay/joinSettings/current')));
     await expect(requestFamilyAccess(joining, code.slice(0, -1) + (code.endsWith('0') ? '1' : '0'), 'Sibling')).rejects.toThrow(/invalid or expired/);
     const pending = await requestFamilyAccess(joining, code, 'Sibling');
     expect(pending.requests).toEqual([{ familyId: 'maymay', status: 'Pending' }]);
     expect((await listPendingRequests(owner)).map(item => item.userId)).toContain('joining');
     expect((await listPendingRequests(owner))[0].relationship).toBe('Sibling');
+    expect((await listPendingRequests(owner)).find(item => item.userId === 'joining')?.proposedPatientIds).toEqual(['maymay']);
     await assertFails(getDoc(doc(joining.db, 'families/maymay')));
     await assertFails(getDoc(doc(joining.db, 'families/maymay/patients/maymay')));
     await assertFails(updateDoc(doc(joining.db, 'families/maymay/memberships/joining'), { status: 'Active' }));
@@ -338,16 +344,64 @@ describe('Family Code requests and Primary approval', () => {
     await assertFails(deleteDoc(doc(joining.db, 'families/maymay/memberships/direct')));
   });
 
-  it('requires verified identity, enforces expiry and limits bad guesses', async () => {
+  it('requires verified identity and enforces expiry directly in Firebase', async () => {
     const owner = ownerConnection();
     const { code, inviteId } = await rotateFamilyCode(owner, 'maymay', ['maymay']);
     await expect(requestFamilyAccess(await applicant('unverified'), code, 'Sibling')).rejects.toThrow(/Verify your email/);
-    await expect(requestFamilyAccess(await applicant('invalid'), code, 'Sibling')).rejects.toThrow(/sign-in expired/);
-    const joining = await applicant('limited');
-    for (let i = 0; i < 10; i++) await expect(requestFamilyAccess(joining, 'bad code', 'Sibling')).rejects.toThrow(/invalid or expired/);
-    await expect(requestFamilyAccess(joining, code, 'Sibling')).rejects.toThrow(/Too many attempts/);
+    const unverified = await applicant('unverified-again');
+    unverified.db = env.authenticatedContext('unverified-again', { email: unverified.user.email!, email_verified: false }).firestore() as unknown as Firestore;
+    // Forging the UI emailVerified flag cannot bypass the token claim in rules.
+    await expect(requestFamilyAccess(unverified, code, 'Sibling')).rejects.toThrow(/invalid or expired/);
+    const signedOut = await applicant('signed-out');
+    signedOut.db = env.unauthenticatedContext().firestore() as unknown as Firestore;
+    await expect(requestFamilyAccess(signedOut, code, 'Sibling')).rejects.toThrow();
     await adminDb.doc('families/maymay/invitations/' + inviteId).update({ expiresAt: new Date(0) });
     await expect(requestFamilyAccess(await applicant('late'), code, 'Sibling')).rejects.toThrow(/invalid or expired/);
+  });
+
+  it('retains legacy host token rejection and bad-attempt throttling for old clients', async () => {
+    const address = invitationServer.address() as { port: number };
+    const response = await nativeFetch('http://127.0.0.1:' + address.port + '/api/family-invitations/request', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer invalid' }, body: '{}',
+    });
+    expect(response.status).toBe(401);
+    const joining = await applicant('limited');
+    const execute = createInvitationService(adminDb);
+    const { code } = await execute('rotate', { uid: 'owner' }, { dataGeneration: 'test-generation', familyId: 'maymay', patientIds: ['maymay'] });
+    await requestFamilyAccess(joining, code, 'Sibling');
+    await cancelFamilyRequest(joining, 'maymay');
+    const actor = { uid: joining.user.uid, email: joining.user.email, email_verified: true };
+    const input = { dataGeneration: 'test-generation', relationship: 'Sibling' };
+    for (let i = 0; i < 10; i++) await expect(execute('request', actor, { ...input, code: 'bad code' })).rejects.toThrow(/invalid or expired/);
+    await expect(execute('request', actor, { ...input, code })).rejects.toThrow(/Too many attempts/);
+  });
+
+  it('generates, joins, approves and cancels with no host endpoint or SubtleCrypto', async () => {
+    const originalCrypto = globalThis.crypto;
+    const originalFetch = globalThis.fetch;
+    vi.stubGlobal('crypto', { getRandomValues: originalCrypto.getRandomValues.bind(originalCrypto) });
+    vi.stubGlobal('fetch', (url: string | URL | Request, init?: RequestInit) => {
+      if (typeof url === 'string' && url.startsWith('/api/')) throw new Error('Static host has no API');
+      return nativeFetch(url, init);
+    });
+    try {
+      const owner = ownerConnection();
+      const joining = await applicant('static-site');
+      const issued = await rotateFamilyCode(owner, 'maymay', ['maymay']);
+      expect(issued.code).toMatch(/^MM1\.maymay\.[a-f0-9]{24}\.[a-f0-9]{32}$/);
+      await requestFamilyAccess(joining, issued.code, 'Sibling');
+      await cancelFamilyRequest(joining, 'maymay');
+      expect((await getDoc(doc(joining.db, 'families/maymay/memberships/static-site'))).exists()).toBe(false);
+      await requestFamilyAccess(joining, issued.code, 'Sibling');
+      await approveFamilyRequest(owner, 'maymay', 'static-site', 'Viewer', ['maymay']);
+      await assertSucceeds(getDoc(doc(joining.db, 'families/maymay/patients/maymay')));
+      await assertFails(deleteDoc(doc(joining.db, 'families/maymay/memberships/static-site')));
+      vi.stubGlobal('crypto', {});
+      await expect(rotateFamilyCode(owner, 'maymay', ['maymay'])).rejects.toThrow(/securely generate/);
+    } finally {
+      vi.stubGlobal('crypto', originalCrypto);
+      vi.stubGlobal('fetch', originalFetch);
+    }
   });
 
   it('deduplicates requests and resolves concurrent approval/rejection only once', async () => {
@@ -365,6 +419,48 @@ describe('Family Code requests and Primary approval', () => {
     const member = (await adminDb.doc('families/maymay/memberships/racing').get()).data();
     const grant = await adminDb.doc('families/maymay/patients/maymay/relationships/racing').get();
     expect(grant.exists).toBe(member?.status === 'Active');
+  });
+
+  it('rejects forged request fields even when the caller knows the correct code', async () => {
+    const joining = await applicant('forged');
+    const { code, inviteId } = await rotateFamilyCode(ownerConnection(), 'maymay', ['maymay']);
+    const invitation = (await adminDb.doc('families/maymay/invitations/' + inviteId).get()).data()!;
+    await updateDoc(doc(joining.db, 'users/forged'), { familyIds: ['maymay'] });
+    const pending = {
+      familyId: 'maymay', userId: 'forged', role: 'Caregiver', status: 'Pending', patientIds: [],
+      invitationId: inviteId, invitationProof: invitation.codeHash, dataGeneration: 'test-generation',
+      requesterName: 'Applicant', requesterEmail: 'forged@example.test', requesterEmailVerified: true,
+      relationship: 'Sibling', requestedAt: serverTimestamp(),
+    };
+    for (const tampering of [
+      { status: 'Active' }, { role: 'Primary' }, { patientIds: ['maymay'] },
+      { requesterEmail: 'owner@example.test' }, { approvedBy: 'owner' },
+      { invitationProof: '0'.repeat(64) }, { dataGeneration: 'old' },
+      { requestedAt: Timestamp.fromMillis(0) }, { proposedPatientIds: ['maymay'] },
+    ]) await assertFails(setDoc(doc(joining.db, 'families/maymay/memberships/forged'), { ...pending, ...tampering }));
+    await assertFails(getDoc(doc(joining.db, 'families/maymay/patients/maymay')));
+    await requestFamilyAccess(joining, code, 'Sibling');
+    await assertFails(updateDoc(doc(joining.db, 'families/maymay/memberships/forged'), { relationship: 'Changed without review' }));
+    await cancelFamilyRequest(joining, 'maymay');
+    expect((await getDoc(doc(joining.db, 'families/maymay/memberships/forged'))).exists()).toBe(false);
+  });
+
+  it('enforces generation and actual Primary membership for browser management', async () => {
+    const owner = ownerConnection();
+    const first = await rotateFamilyCode(owner, 'maymay', ['maymay']);
+    await expect(rotateFamilyCode({ ...owner, dataGeneration: 'old' }, 'maymay', ['maymay'])).rejects.toThrow(/setup changed/);
+    await expect(rotateFamilyCode(owner, 'maymay', ['other-patient'])).rejects.toThrow(/unavailable/);
+    const stranger = await applicant('fake-primary');
+    await adminDb.doc('admins/fake-primary').set({ status: 'Active' });
+    const forgedPrimary = { ...stranger, families: owner.families };
+    await expect(rotateFamilyCode(forgedPrimary, 'maymay', ['maymay'])).rejects.toThrow();
+    await assertFails(updateDoc(doc(owner.db, 'families/maymay'), { activeInviteId: 'a'.repeat(24) }));
+    await assertFails(updateDoc(doc(owner.db, 'families/maymay/invitations/' + first.inviteId), { codeHash: '0'.repeat(64) }));
+    await requestFamilyAccess(stranger, first.code, 'Sibling');
+    await expect(approveFamilyRequest(forgedPrimary, 'maymay', stranger.user.uid, 'Caregiver', ['maymay'])).rejects.toThrow();
+    expect((await getFamilyInvitation(owner, 'maymay'))?.inviteId).toBe(first.inviteId);
+    await rejectFamilyRequest(owner, 'maymay', stranger.user.uid);
+    await assertFails(getDoc(doc(stranger.db, 'families/maymay/patients/maymay')));
   });
 
   it('enforces current generation, Primary role and patient scope in trusted operations', async () => {
