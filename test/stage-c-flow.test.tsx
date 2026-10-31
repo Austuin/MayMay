@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FamilyAccess } from '@/app/family-access';
@@ -194,6 +194,74 @@ describe('Stage C invitation controls', () => {
       else Reflect.deleteProperty(navigator, 'clipboard');
       if (execCommand) Object.defineProperty(document, 'execCommand', execCommand);
       else Reflect.deleteProperty(document, 'execCommand');
+    }
+  });
+
+  it('shares a generated code with a clear invitation message when sharing is supported', async () => {
+    const share = Object.getOwnPropertyDescriptor(navigator, 'share');
+    const nativeShare = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, 'share', { configurable: true, value: nativeShare });
+
+    try {
+      render(<FamilyAccess connection={connection()} onChanged={vi.fn()} />);
+      expect(screen.queryByRole('button', { name: 'Share code' })).toBeNull();
+      fireEvent.click(screen.getByRole('button', { name: 'Generate code' }));
+      fireEvent.click(await screen.findByRole('button', { name: 'Share code' }));
+      await waitFor(() => expect((screen.getByRole('button', { name: 'Share code' }) as HTMLButtonElement).disabled).toBe(false));
+      expect(nativeShare).toHaveBeenCalledWith(expect.objectContaining({
+        title: 'MayMay Family Code',
+        text: expect.stringContaining('Enter family code'),
+      }));
+      expect(nativeShare).toHaveBeenCalledWith(expect.objectContaining({ text: expect.stringContaining('MM1.family-a.') }));
+      const payload = nativeShare.mock.calls[0] as unknown as [ShareData];
+      expect(payload[0].text).toContain('approve your request');
+      expect(payload[0].text).toContain('7 days after it was created');
+      expect(payload[0].text).not.toContain('Sam');
+      expect(screen.queryByRole('status')).toBeNull();
+    } finally {
+      if (share) Object.defineProperty(navigator, 'share', share);
+      else Reflect.deleteProperty(navigator, 'share');
+    }
+  });
+
+  it('keeps Copy and offers messaging guidance when native sharing is unavailable', async () => {
+    const share = Object.getOwnPropertyDescriptor(navigator, 'share');
+    Object.defineProperty(navigator, 'share', { configurable: true, value: undefined });
+    try {
+      render(<FamilyAccess connection={connection()} onChanged={vi.fn()} />);
+      fireEvent.click(screen.getByRole('button', { name: 'Generate code' }));
+      await screen.findByRole('button', { name: 'Copy code' });
+      expect(screen.queryByRole('button', { name: 'Share code' })).toBeNull();
+      expect(screen.getByText('To invite someone, copy the code and paste it into your messaging app.')).toBeTruthy();
+    } finally {
+      if (share) Object.defineProperty(navigator, 'share', share);
+      else Reflect.deleteProperty(navigator, 'share');
+    }
+  });
+
+  it.each(['AbortError', 'NotAllowedError'])('handles %s and allows another share attempt', async name => {
+    const share = Object.getOwnPropertyDescriptor(navigator, 'share');
+    let rejectShare!: (reason: Error) => void;
+    const nativeShare = vi.fn(() => new Promise<void>((_resolve, reject) => { rejectShare = reject; }));
+    Object.defineProperty(navigator, 'share', { configurable: true, value: nativeShare });
+    try {
+      render(<FamilyAccess connection={connection()} onChanged={vi.fn()} />);
+      fireEvent.click(screen.getByRole('button', { name: 'Generate code' }));
+      fireEvent.click(await screen.findByRole('button', { name: 'Share code' }));
+      const opening = screen.getByRole('button', { name: 'Opening share…' });
+      expect(opening.closest('fieldset')?.disabled).toBe(true);
+      fireEvent.click(opening);
+      expect(nativeShare).toHaveBeenCalledTimes(1);
+      await act(async () => rejectShare(new DOMException('Share failed', name)));
+      expect(screen.getByRole('button', { name: 'Share code' }).closest('fieldset')?.disabled).toBe(false);
+      if (name === 'AbortError') expect(screen.queryByRole('status')).toBeNull();
+      else expect(screen.getByRole('status').textContent).toContain('Copy the code and paste it into your messaging app.');
+      fireEvent.click(screen.getByRole('button', { name: 'Share code' }));
+      expect(nativeShare).toHaveBeenCalledTimes(2);
+      await act(async () => rejectShare(new DOMException('Cancelled', 'AbortError')));
+    } finally {
+      if (share) Object.defineProperty(navigator, 'share', share);
+      else Reflect.deleteProperty(navigator, 'share');
     }
   });
 
