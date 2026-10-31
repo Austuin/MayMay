@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { Copy, Share2 } from 'lucide-react';
 import type { FirebaseConnection, FamilyOption } from '@/lib/maymay-firebase';
 import {
   approveFamilyRequest, changeFamilyMemberPatients, disableFamilyMember,
@@ -116,6 +117,8 @@ export function FamilyAccess({ connection, onChanged }: {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [canShare, setCanShare] = useState(false);
+  const [sharing, setSharing] = useState(false);
+  const shareInProgress = useRef(false);
   const codeInput = useRef<HTMLInputElement>(null);
   const familyId = family?.role === 'Primary' ? family.familyId : '';
   const code = issued?.familyId === familyId && issued.generation === connection.dataGeneration && issued.inviteId === invitation?.inviteId ? issued.code : null;
@@ -191,21 +194,26 @@ export function FamilyAccess({ connection, onChanged }: {
   }
 
   async function shareCode() {
-    if (!code || !navigator.share) return;
+    if (!code || !navigator.share || shareInProgress.current) return;
+    shareInProgress.current = true;
+    setSharing(true);
+    setMessage('');
     try {
       await navigator.share({
         title: 'MayMay Family Code',
-        text: `You’re invited to join my MayMay family. In MayMay, choose “Enter family code,” then enter this code:\n\n${code}\n\nPlease share this code only with someone you trust.`,
+        text: `I'd love for you to join our family on MayMay so we can stay connected and coordinate care together!\n\nOpen MayMay, choose “Enter family code,” and paste this code:\n\n${code}\n\nA Primary caregiver will approve your request before you can see any care records. This code expires 7 days after it was created. Please keep this invitation private.`,
       });
-      setMessage('Choose an app to send your Family Code privately.');
     } catch (error) {
-      if ((error as { name?: string }).name !== 'AbortError') setMessage('Could not open the share sheet. Copy the code to send it instead.');
+      if (!(typeof error === 'object' && error !== null && 'name' in error && error.name === 'AbortError')) setMessage('Sharing is unavailable right now. Copy the code and paste it into your messaging app.');
+    } finally {
+      shareInProgress.current = false;
+      setSharing(false);
     }
   }
 
   return <section className="space-y-6 rounded-2xl border bg-card p-6" aria-label="Family members and access">
     <div><h2 className="text-xl font-bold">Family members</h2><p className="text-sm text-muted-foreground">Primary caregivers can review requests, change roles, and revoke access.</p></div>
-    <fieldset disabled={busy} className="space-y-6 disabled:opacity-60">
+    <fieldset disabled={busy || sharing} className="space-y-6 disabled:opacity-60">
     <div className="space-y-3">
       <h3 className="font-semibold">Current members</h3>
       {others.map(member => <MemberRow key={member.userId + member.status + member.role + member.patientIds.join(',')} connection={connection} family={family} member={member} onAction={act} />)}
@@ -220,14 +228,14 @@ export function FamilyAccess({ connection, onChanged }: {
     </div>
     <div className="space-y-3 rounded-xl bg-muted/40 p-4">
       <h3 className="font-semibold">Family Code</h3>
-      <p className="text-sm text-muted-foreground">Codes expire after 7 days. Copy a new code now; it cannot be shown again after you leave this page.</p>
+      <p className="text-sm text-muted-foreground">Codes expire after 7 days. Copy or share a new code now; it cannot be shown again after you leave this page.</p>
       {invitation && <p className="text-sm">{invitation.revoked || new Date(invitation.expiresAt).getTime() <= Date.now() ? 'Code expired or revoked.' : 'Code active.'} Expires {new Date(invitation.expiresAt).toLocaleString()}.</p>}
       <PatientChoices family={family} selected={invitePatients} onChange={setInvitePatients} />
       <p className="text-xs text-muted-foreground">These patients are suggested for new requests. A Primary confirms access when approving.</p>
       {code ? <input ref={codeInput} aria-label="Current Family Code" className="w-full rounded-md border bg-background p-2 font-mono text-xs" value={code} readOnly onFocus={event => event.target.select()} /> : <p className="text-sm text-muted-foreground">{invitation ? 'Generate a replacement if you need a code to share. Existing requests remain for review.' : 'Generate a code when you are ready to invite someone.'}</p>}
       <div className="flex flex-wrap gap-2">
-        {code && <button className="rounded-md border px-4 py-2 text-sm" onClick={() => { void copyCode(); }}>Copy code</button>}
-        {code && canShare && <button className="rounded-md border px-4 py-2 text-sm" onClick={() => { void shareCode(); }}>Share code</button>}
+        {code && <button type="button" className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md border px-4 py-2 text-sm hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring" onClick={() => { void copyCode(); }}><Copy aria-hidden="true" className="size-4" />Copy code</button>}
+        {code && canShare && <button type="button" className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring" onClick={() => { void shareCode(); }}><Share2 aria-hidden="true" className="size-4" />{sharing ? 'Opening share…' : 'Share code'}</button>}
         <button className="rounded-md border px-4 py-2 text-sm" disabled={busy} onClick={() =>
           void act(async () => {
             const result = await rotateFamilyCode(connection, family.familyId, invitePatients);
@@ -236,6 +244,7 @@ export function FamilyAccess({ connection, onChanged }: {
           }, invitation ? 'Code replaced. The old code can no longer create requests.' : 'Family Code generated.')
         }>{invitation ? 'Replace code' : 'Generate code'}</button>
       </div>
+      {code && <p className="text-xs text-muted-foreground">{canShare ? 'Share a ready-to-send invitation through an app on your device.' : 'To invite someone, copy the code and paste it into your messaging app.'}</p>}
     </div>
     </fieldset>
     {message && <p role="status" className="text-sm">{message}</p>}
