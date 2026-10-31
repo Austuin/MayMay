@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { FirebaseConnection, FamilyOption } from '@/lib/maymay-firebase';
 import {
   approveFamilyRequest, changeFamilyMemberPatients, disableFamilyMember,
@@ -115,6 +115,7 @@ export function FamilyAccess({ connection, onChanged }: {
   const [members, setMembers] = useState<FamilyMember[]>([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
+  const codeInput = useRef<HTMLInputElement>(null);
   const familyId = family?.role === 'Primary' ? family.familyId : '';
   const code = issued?.familyId === familyId && issued.generation === connection.dataGeneration && issued.inviteId === invitation?.inviteId ? issued.code : null;
 
@@ -158,6 +159,32 @@ export function FamilyAccess({ connection, onChanged }: {
     finally { setBusy(false); }
   }
 
+  async function copyCode() {
+    if (!code) return;
+
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(code);
+        setMessage('Family Code copied.');
+        return;
+      }
+    } catch {
+      // Local HTTP sites and some mobile browsers cannot use the Clipboard API.
+    }
+
+    const input = codeInput.current;
+    if (!input) { setMessage('Select and copy the code above.'); return; }
+    input.focus();
+    input.select();
+    input.setSelectionRange(0, input.value.length);
+    try {
+      if (document.execCommand('copy')) setMessage('Family Code copied.');
+      else setMessage('Select and copy the code above.');
+    } catch {
+      setMessage('Select and copy the code above.');
+    }
+  }
+
   return <section className="space-y-6 rounded-2xl border bg-card p-6" aria-label="Family members and access">
     <div><h2 className="text-xl font-bold">Family members</h2><p className="text-sm text-muted-foreground">Primary caregivers can review requests, change roles, and revoke access.</p></div>
     <fieldset disabled={busy} className="space-y-6 disabled:opacity-60">
@@ -179,12 +206,9 @@ export function FamilyAccess({ connection, onChanged }: {
       {invitation && <p className="text-sm">{invitation.revoked || new Date(invitation.expiresAt).getTime() <= Date.now() ? 'Code expired or revoked.' : 'Code active.'} Expires {new Date(invitation.expiresAt).toLocaleString()}.</p>}
       <PatientChoices family={family} selected={invitePatients} onChange={setInvitePatients} />
       <p className="text-xs text-muted-foreground">These patients are suggested for new requests. A Primary confirms access when approving.</p>
-      {code ? <input aria-label="Current Family Code" className="w-full rounded-md border bg-background p-2 font-mono text-xs" value={code} readOnly onFocus={event => event.target.select()} /> : <p className="text-sm text-muted-foreground">{invitation ? 'Generate a replacement if you need a code to share. Existing requests remain for review.' : 'Generate a code when you are ready to invite someone.'}</p>}
+      {code ? <input ref={codeInput} aria-label="Current Family Code" className="w-full rounded-md border bg-background p-2 font-mono text-xs" value={code} readOnly onFocus={event => event.target.select()} /> : <p className="text-sm text-muted-foreground">{invitation ? 'Generate a replacement if you need a code to share. Existing requests remain for review.' : 'Generate a code when you are ready to invite someone.'}</p>}
       <div className="flex flex-wrap gap-2">
-        {code && <button className="rounded-md border px-4 py-2 text-sm" onClick={() => {
-          if (!navigator.clipboard) { setMessage('Select and copy the code above.'); return; }
-          void navigator.clipboard.writeText(code).then(() => setMessage('Family Code copied.')).catch(() => setMessage('Select and copy the code above.'));
-        }}>Copy code</button>}
+        {code && <button className="rounded-md border px-4 py-2 text-sm" onClick={() => { void copyCode(); }}>Copy code</button>}
         <button className="rounded-md border px-4 py-2 text-sm" disabled={busy} onClick={() =>
           void act(async () => {
             const result = await rotateFamilyCode(connection, family.familyId, invitePatients);

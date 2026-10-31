@@ -147,6 +147,56 @@ describe('Stage C invitation controls', () => {
     expect(onChanged).toHaveBeenCalled();
   });
 
+  it('copies a generated code with the mobile fallback when the Clipboard API is unavailable', async () => {
+    const clipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
+    const execCommand = Object.getOwnPropertyDescriptor(document, 'execCommand');
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined });
+    const copy = vi.fn(() => true);
+    Object.defineProperty(document, 'execCommand', { configurable: true, value: copy });
+
+    try {
+      render(<FamilyAccess connection={connection()} onChanged={vi.fn()} />);
+      fireEvent.click(screen.getByRole('button', { name: 'Generate code' }));
+      await screen.findByRole('button', { name: 'Copy code' });
+      const input = screen.getByLabelText('Current Family Code') as HTMLInputElement;
+      fireEvent.click(screen.getByRole('button', { name: 'Copy code' }));
+      await screen.findByText('Family Code copied.');
+      expect(copy).toHaveBeenCalledWith('copy');
+      expect(document.activeElement).toBe(input);
+      expect(input.selectionStart).toBe(0);
+      expect(input.selectionEnd).toBe(input.value.length);
+    } finally {
+      if (clipboard) Object.defineProperty(navigator, 'clipboard', clipboard);
+      else Reflect.deleteProperty(navigator, 'clipboard');
+      if (execCommand) Object.defineProperty(document, 'execCommand', execCommand);
+      else Reflect.deleteProperty(document, 'execCommand');
+    }
+  });
+
+  it('falls back to selection when the Clipboard API rejects a copy', async () => {
+    const clipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
+    const execCommand = Object.getOwnPropertyDescriptor(document, 'execCommand');
+    const writeText = vi.fn(async () => { throw new Error('Clipboard permission denied'); });
+    const copy = vi.fn(() => true);
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+    Object.defineProperty(document, 'execCommand', { configurable: true, value: copy });
+
+    try {
+      render(<FamilyAccess connection={connection()} onChanged={vi.fn()} />);
+      fireEvent.click(screen.getByRole('button', { name: 'Generate code' }));
+      await screen.findByRole('button', { name: 'Copy code' });
+      fireEvent.click(screen.getByRole('button', { name: 'Copy code' }));
+      await screen.findByText('Family Code copied.');
+      expect(writeText).toHaveBeenCalledWith(expect.stringContaining('MM1.family-a.'));
+      expect(copy).toHaveBeenCalledWith('copy');
+    } finally {
+      if (clipboard) Object.defineProperty(navigator, 'clipboard', clipboard);
+      else Reflect.deleteProperty(navigator, 'clipboard');
+      if (execCommand) Object.defineProperty(document, 'execCommand', execCommand);
+      else Reflect.deleteProperty(document, 'execCommand');
+    }
+  });
+
   it('checks a pending request and shows access after approval', async () => {
     const pending = connection('Caregiver', [{ familyId: 'family-a', status: 'Pending' }]);
     const approved = connection('Primary');
