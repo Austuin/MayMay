@@ -115,6 +115,7 @@ export function FamilyAccess({ connection, onChanged }: {
   const [members, setMembers] = useState<FamilyMember[]>([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
+  const [canShare, setCanShare] = useState(false);
   const codeInput = useRef<HTMLInputElement>(null);
   const familyId = family?.role === 'Primary' ? family.familyId : '';
   const code = issued?.familyId === familyId && issued.generation === connection.dataGeneration && issued.inviteId === invitation?.inviteId ? issued.code : null;
@@ -123,6 +124,10 @@ export function FamilyAccess({ connection, onChanged }: {
     setIssued(null);
     setInvitePatients(connection.families.find(item => item.familyId === familyId)?.patients.map(patient => patient.patientId) ?? []);
   }, [familyId, connection.dataGeneration]);
+
+  useEffect(() => {
+    setCanShare(typeof navigator.share === 'function');
+  }, []);
 
   useEffect(() => {
     setMembers([]); setInvitation(null); setMessage('');
@@ -185,6 +190,19 @@ export function FamilyAccess({ connection, onChanged }: {
     }
   }
 
+  async function shareCode() {
+    if (!code || !navigator.share) return;
+    try {
+      await navigator.share({
+        title: 'MayMay Family Code',
+        text: `You’re invited to join my MayMay family. In MayMay, choose “Enter family code,” then enter this code:\n\n${code}\n\nPlease share this code only with someone you trust.`,
+      });
+      setMessage('Choose an app to send your Family Code privately.');
+    } catch (error) {
+      if ((error as { name?: string }).name !== 'AbortError') setMessage('Could not open the share sheet. Copy the code to send it instead.');
+    }
+  }
+
   return <section className="space-y-6 rounded-2xl border bg-card p-6" aria-label="Family members and access">
     <div><h2 className="text-xl font-bold">Family members</h2><p className="text-sm text-muted-foreground">Primary caregivers can review requests, change roles, and revoke access.</p></div>
     <fieldset disabled={busy} className="space-y-6 disabled:opacity-60">
@@ -209,6 +227,7 @@ export function FamilyAccess({ connection, onChanged }: {
       {code ? <input ref={codeInput} aria-label="Current Family Code" className="w-full rounded-md border bg-background p-2 font-mono text-xs" value={code} readOnly onFocus={event => event.target.select()} /> : <p className="text-sm text-muted-foreground">{invitation ? 'Generate a replacement if you need a code to share. Existing requests remain for review.' : 'Generate a code when you are ready to invite someone.'}</p>}
       <div className="flex flex-wrap gap-2">
         {code && <button className="rounded-md border px-4 py-2 text-sm" onClick={() => { void copyCode(); }}>Copy code</button>}
+        {code && canShare && <button className="rounded-md border px-4 py-2 text-sm" onClick={() => { void shareCode(); }}>Share code</button>}
         <button className="rounded-md border px-4 py-2 text-sm" disabled={busy} onClick={() =>
           void act(async () => {
             const result = await rotateFamilyCode(connection, family.familyId, invitePatients);

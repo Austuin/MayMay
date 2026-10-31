@@ -197,6 +197,27 @@ describe('Stage C invitation controls', () => {
     }
   });
 
+  it('shares a generated code with a clear invitation message when sharing is supported', async () => {
+    const share = Object.getOwnPropertyDescriptor(navigator, 'share');
+    const nativeShare = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, 'share', { configurable: true, value: nativeShare });
+
+    try {
+      render(<FamilyAccess connection={connection()} onChanged={vi.fn()} />);
+      fireEvent.click(screen.getByRole('button', { name: 'Generate code' }));
+      fireEvent.click(await screen.findByRole('button', { name: 'Share code' }));
+      await screen.findByText('Choose an app to send your Family Code privately.');
+      expect(nativeShare).toHaveBeenCalledWith(expect.objectContaining({
+        title: 'MayMay Family Code',
+        text: expect.stringContaining('Enter family code'),
+      }));
+      expect(nativeShare).toHaveBeenCalledWith(expect.objectContaining({ text: expect.stringContaining('MM1.family-a.') }));
+    } finally {
+      if (share) Object.defineProperty(navigator, 'share', share);
+      else Reflect.deleteProperty(navigator, 'share');
+    }
+  });
+
   it('checks a pending request and shows access after approval', async () => {
     const pending = connection('Caregiver', [{ familyId: 'family-a', status: 'Pending' }]);
     const approved = connection('Primary');
